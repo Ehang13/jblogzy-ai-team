@@ -5,11 +5,14 @@ import { chromium } from 'playwright';
 
 const WRITE_URL = (id) => `https://blog.naver.com/${id}/postwrite`;
 
-// 쿠키 복원
+// 쿠키 복원 (base64 인코딩 또는 raw JSON 모두 지원)
 async function restoreCookies(context) {
   const raw = process.env.NAVER_COOKIES;
   if (!raw) throw new Error('NAVER_COOKIES 환경변수가 없습니다');
-  const cookies = JSON.parse(raw);
+  const json = raw.trim().startsWith('[')
+    ? raw
+    : Buffer.from(raw.trim(), 'base64').toString('utf-8');
+  const cookies = JSON.parse(json);
   await context.addCookies(cookies);
 }
 
@@ -34,15 +37,20 @@ async function handleDraftPopup(page) {
   } catch {}
 }
 
-// 에디터 iframe 찾기 (SE3: mainFrame, SE2: se2_iframe 등)
+// 에디터 iframe 찾기 (SE3: mainFrame 우선)
 async function findEditorFrame(page) {
   await page.waitForTimeout(3000);
+  // 1순위: mainFrame 이름으로 직접 탐색 (Python 코드와 동일 패턴)
+  for (const frame of page.frames()) {
+    if (frame.name() === 'mainFrame') return frame;
+  }
+  // 2순위: URL 패턴으로 탐색
   for (const frame of page.frames()) {
     const url = frame.url();
-    if (url.includes('blog.naver.com') && url.includes('postwrite')) return frame;
-    if (url.includes('editor') || url.includes('se.naver.com')) return frame;
+    if (url.includes('PostWriteForm') || url.includes('postwrite')) return frame;
+    if (url.includes('se.naver.com')) return frame;
   }
-  // iframe이 없으면 메인 페이지에서 직접 처리
+  // iframe 없으면 메인 페이지 직접 사용
   return page;
 }
 
@@ -132,50 +140,31 @@ async function inputTags(page, tags) {
   } catch {}
 }
 
-// 발행 버튼 클릭 (메인 페이지에서)
+// 발행 버튼 클릭 (default content, 2단계)
+// Python 코드 분석: 저장/발행 버튼은 mainFrame 바깥(outer page)에 위치
 async function clickPublish(page) {
-  // 메인 컨텍스트로 복귀
-  await page.evaluate(() => {});
-
-  // 1차 발행 버튼 클릭
-  const clicked1 = await page.evaluate(() => {
-    const btns = [...document.querySelectorAll('button, .btn_submit, a.btn')];
-    const btn = btns.find(el => {
-      const txt = el.textContent?.trim();
-      return txt === '발행' || txt === '포스트 발행';
-    });
-    if (btn) { btn.click(); return true; }
-    return false;
-  });
-
-  if (!clicked1) {
-    // CSS 선택자로 재시도
-    try {
-      await page.locator('button:has-text("발행")').first().click({ timeout: 3000 });
-    } catch {
-      throw new Error('발행 버튼을 찾을 수 없습니다');
-    }
+  // 1차: 우측 상단 '발행' 버튼 클릭
+  try {
+    await page.locator('button:has-text("발행")').first().click({ timeout: 5000 });
+  } catch {
+    throw new Error('1차 발행 버튼을 찾을 수 없습니다');
   }
 
+  // 발행 설정 패널 열릴 때까지 대기
   await page.waitForTimeout(2000);
 
-  // 발행 설정 패널이 열리면 → 전체공개 확인 후 최종 발행
-  const published = await page.evaluate(() => {
-    const btns = [...document.querySelectorAll('button')];
-    // 패널 내부의 확인/발행 버튼 (마지막 "발행" 텍스트 버튼)
-    const candidates = btns.filter(b => {
-      const txt = b.textContent?.trim();
-      return txt === '발행' || txt === '확인' || txt === '포스트 발행';
-    });
-    if (candidates.length > 0) {
-      candidates[candidates.length - 1].click();
-      return true;
+  // 2차: 패널 내 '✓ 발행' 버튼 (페이지에서 마지막 '발행' 텍스트 버튼)
+  try {
+    const btns = page.locator('button:has-text("발행")');
+    const count = await btns.count();
+    if (count > 0) {
+      await btns.nth(count - 1).click({ timeout: 5000 });
     }
-    return false;
-  });
+  } catch {
+    throw new Error('2차 발행 버튼(패널)을 찾을 수 없습니다');
+  }
 
   await page.waitForTimeout(3000);
-  return published;
 }
 
 // ─────────────────────────────────────────────

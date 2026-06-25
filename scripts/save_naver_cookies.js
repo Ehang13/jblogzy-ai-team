@@ -21,16 +21,25 @@ const context = await browser.newContext({
 const page = await context.newPage();
 await page.goto('https://nid.naver.com/nidlogin.login');
 
-console.log('로그인 완료를 기다리는 중... (최대 2분)');
+console.log('로그인 완료를 기다리는 중... (최대 3분)');
+console.log('→ 브라우저에서 로그인하세요. 완료되면 자동으로 쿠키를 저장합니다.\n');
 
-// NID_AUT 쿠키가 생길 때까지 대기 (로그인 완료 신호)
-await page.waitForFunction(
-  () => document.cookie.includes('NID_AUT'),
-  { timeout: 120_000 }
-).catch(() => {
+// 3초마다 쿠키 상태 출력하면서 대기
+let found = false;
+for (let i = 0; i < 60; i++) {
+  await page.waitForTimeout(3000);
+  const cookies = await context.cookies(['https://www.naver.com', 'https://naver.com']);
+  const names   = cookies.map(c => c.name);
+  const hasAuth = names.includes('NID_AUT') || names.includes('NID_SES');
+  console.log(`  [${i * 3}초] 쿠키: ${names.slice(0, 5).join(', ')} ${hasAuth ? '✅ 로그인 감지!' : ''}`);
+  if (hasAuth) { found = true; break; }
+}
+
+if (!found) {
   console.error('로그인 시간 초과. 다시 시도하세요.');
+  await browser.close();
   process.exit(1);
-});
+}
 
 await page.waitForTimeout(2000);
 
@@ -40,15 +49,20 @@ const cookies = await context.cookies([
   'https://blog.naver.com',
 ]);
 
-const output = JSON.stringify(cookies, null, 2);
-writeFileSync('naver_cookies.json', output, 'utf-8');
+const minified = JSON.stringify(cookies);
+const encoded  = Buffer.from(minified).toString('base64');
+writeFileSync('naver_cookies.json', minified, 'utf-8');
 
 console.log(`\n✅ 쿠키 ${cookies.length}개 저장 완료: naver_cookies.json`);
+console.log('\n📋 GitHub Secret 등록용 base64 값 (이 값을 NAVER_COOKIES에 등록):');
+console.log('─'.repeat(60));
+console.log(encoded);
+console.log('─'.repeat(60));
 console.log('\n다음 단계:');
-console.log('1. GitHub 저장소 → Settings → Secrets → New repository secret');
-console.log('   Name:  NAVER_COOKIES');
-console.log('   Value: naver_cookies.json 파일 내용 전체 (JSON 그대로)');
-console.log('2. NAVER_BLOG_ID secret도 추가 (네이버 블로그 아이디)');
+console.log('1. 위 base64 문자열을 복사');
+console.log('2. GitHub 저장소 → Settings → Secrets → NAVER_COOKIES → Update');
+console.log('   (또는 터미널에서 Claude Code가 자동 등록)');
+console.log('3. NAVER_BLOG_ID secret도 확인 (네이버 블로그 아이디)');
 console.log('\n⚠️  naver_cookies.json 파일은 .gitignore에 추가하세요.\n');
 
 await browser.close();
