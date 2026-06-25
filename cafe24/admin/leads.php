@@ -11,6 +11,10 @@ if (!isset($_SESSION['admin_logged_in'])) {
 
 $pdo = getDbConnection();
 
+// 자동 승인 설정 조회
+$salesAutoApproveRow = $pdo->query("SELECT value FROM settings WHERE key_name = 'sales_auto_approve' LIMIT 1")->fetch();
+$salesAutoApprove = ($salesAutoApproveRow['value'] ?? '0') === '1';
+
 // CSV 다운로드
 if (($_GET['action'] ?? '') === 'csv') {
     $csvFilter = $_GET['filter'] ?? 'all';
@@ -99,9 +103,21 @@ $industryColors = [
 <nav class="navbar navbar-dark px-4 py-3" style="background:#0f172a;border-bottom:1px solid #1e3a5f;">
   <a href="index.php" class="navbar-brand fw-bold">← jblogzy AI 팀</a>
   <span class="text-white fw-semibold">📊 영업팀 리드 현황</span>
-  <div class="d-flex gap-2">
+  <div class="d-flex align-items-center gap-3">
+    <div class="d-flex align-items-center gap-2">
+      <span class="text-white small">자동 승인</span>
+      <div class="form-check form-switch mb-0">
+        <input class="form-check-input" type="checkbox" id="salesAutoApproveToggle"
+               <?= $salesAutoApprove ? 'checked' : '' ?>
+               onchange="toggleSalesAutoApprove(this.checked)"
+               style="cursor:pointer;width:2.5rem;height:1.25rem;">
+      </div>
+      <span id="salesAutoApproveLabel" class="badge <?= $salesAutoApprove ? 'bg-success' : 'bg-secondary' ?>">
+        <?= $salesAutoApprove ? '자동 승인 ON' : '수동 승인' ?>
+      </span>
+    </div>
     <a href="?action=csv&filter=all" class="btn btn-sm btn-outline-success">
-      <i class="bi bi-download"></i> 전체 CSV 다운로드
+      <i class="bi bi-download"></i> 전체 CSV
     </a>
     <a href="?action=csv&filter=<?= $filter ?>" class="btn btn-sm btn-outline-info">
       <i class="bi bi-download"></i> 현재 필터 CSV
