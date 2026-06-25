@@ -24,13 +24,21 @@ export async function send(payload) {
       body: JSON.stringify(payload),
     });
 
+    const text = await res.text();
+
     if (!res.ok) {
-      const text = await res.text();
-      console.error(`[reporter] 전송 실패 (${res.status}):`, text);
+      console.error(`[reporter] 전송 실패 (${res.status}):`, text.substring(0, 300));
       return false;
     }
 
-    const json = await res.json();
+    let json;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      console.error(`[reporter] JSON 파싱 실패 (status ${res.status}):`, text.substring(0, 500));
+      return false;
+    }
+
     console.log(`[reporter] ✅ 전송 완료 → task_id: ${json.task_id}`);
     return json;  // { task_id, content_queue_id, ... }
 
