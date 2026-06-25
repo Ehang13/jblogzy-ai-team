@@ -16,10 +16,11 @@ async function restoreCookies(context) {
   await context.addCookies(cookies);
 }
 
-// 로그인 상태 확인
-async function isLoggedIn(page) {
+// 로그인 상태 확인 (NID_AUT는 HttpOnly → document.cookie로 확인 불가, context.cookies() 사용)
+async function isLoggedIn(context, page) {
   await page.goto('https://www.naver.com', { waitUntil: 'domcontentloaded', timeout: 15000 });
-  return page.evaluate(() => document.cookie.includes('NID_AUT'));
+  const cookies = await context.cookies(['https://www.naver.com', 'https://naver.com']);
+  return cookies.some(c => c.name === 'NID_AUT');
 }
 
 // 작성 중 팝업 처리 (이전 임시저장 글 있을 때)
@@ -188,7 +189,7 @@ export async function postToNaverBlog({ title, content, tags = [], blogId }) {
     await restoreCookies(context);
     const page = await context.newPage();
 
-    const loggedIn = await isLoggedIn(page);
+    const loggedIn = await isLoggedIn(context, page);
     if (!loggedIn) throw new Error('네이버 로그인 실패 - 쿠키가 만료됐을 수 있습니다');
     console.log('  ✅ 네이버 로그인 확인');
 
