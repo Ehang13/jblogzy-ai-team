@@ -53,19 +53,21 @@ $stmt = $pdo->prepare("SELECT * FROM leads $where ORDER BY created_at DESC LIMIT
 $filter === 'all' ? $stmt->execute() : $stmt->execute([$filter]);
 $leads = $stmt->fetchAll();
 
-// 오늘 통계
+// 통계 - 오늘 발굴은 날짜 필터, 나머지는 전체 누적
 $today = date('Y-m-d');
-$stmtStats = $pdo->prepare('
+$stmtToday = $pdo->prepare('SELECT COUNT(*) AS total FROM leads WHERE DATE(created_at) = ?');
+$stmtToday->execute([$today]);
+$todayTotal = (int)$stmtToday->fetchColumn();
+
+$stmtStats = $pdo->query('
     SELECT
-        COUNT(*) AS total,
-        SUM(email_status = "sent") AS sent,
-        SUM(email_status = "pending") AS pending_count,
-        SUM(email_status = "replied") AS replied
+        SUM(email_status IN ("pending","guess")) AS pending_count,
+        SUM(email_status = "sent")               AS sent,
+        SUM(email_status = "replied")            AS replied
     FROM leads
-    WHERE DATE(created_at) = ?
 ');
-$stmtStats->execute([$today]);
 $stats = $stmtStats->fetch();
+$stats['total'] = $todayTotal;
 
 $industryColors = [
     '외식업 (맛집/카페)'             => 'success',
@@ -130,10 +132,10 @@ $industryColors = [
   <!-- 오늘 통계 -->
   <div class="row g-3 mb-4">
     <?php foreach ([
-      ['label'=>'오늘 발굴', 'value'=>$stats['total'], 'color'=>'text-info'],
-      ['label'=>'발송 대기', 'value'=>$stats['pending_count'], 'color'=>'text-warning'],
-      ['label'=>'발송 완료', 'value'=>$stats['sent'], 'color'=>'text-success'],
-      ['label'=>'응답 수신', 'value'=>$stats['replied'], 'color'=>'text-primary'],
+      ['label'=>'오늘 발굴',      'value'=>$stats['total'],         'color'=>'text-info'],
+      ['label'=>'전체 발송 대기', 'value'=>$stats['pending_count'], 'color'=>'text-warning'],
+      ['label'=>'전체 발송 완료', 'value'=>$stats['sent'],          'color'=>'text-success'],
+      ['label'=>'응답 수신',      'value'=>$stats['replied'],       'color'=>'text-primary'],
     ] as $s): ?>
       <div class="col-6 col-md-3">
         <div class="stat-card">
