@@ -22,14 +22,18 @@ $filter = $_GET['filter'] ?? 'pending';
 $allowedFilters = ['pending', 'approved', 'rejected', 'regen_requested', 'published', 'all'];
 if (!in_array($filter, $allowedFilters)) $filter = 'pending';
 
-$where = $filter === 'all' ? '' : 'WHERE approval_status = ?';
-$stmt = $pdo->prepare("
-    SELECT * FROM content_queue
-    $where
-    ORDER BY created_at DESC
-    LIMIT 50
-");
-$filter === 'all' ? $stmt->execute() : $stmt->execute([$filter]);
+$dept = $_GET['dept'] ?? 'all';
+$allowedDepts = ['all', 'sales', 'marketing', 'chm'];
+if (!in_array($dept, $allowedDepts)) $dept = 'all';
+
+$conditions = [];
+$params = [];
+if ($filter !== 'all') { $conditions[] = 'approval_status = ?'; $params[] = $filter; }
+if ($dept !== 'all')   { $conditions[] = 'department = ?';      $params[] = $dept; }
+$where = $conditions ? 'WHERE ' . implode(' AND ', $conditions) : '';
+
+$stmt = $pdo->prepare("SELECT * FROM content_queue $where ORDER BY created_at DESC LIMIT 100");
+$stmt->execute($params);
 $items = $stmt->fetchAll();
 
 // benefit_promises 일괄 조회 (content_queue_id 목록으로 in 쿼리)
@@ -112,7 +116,22 @@ function formatAudience(string $raw): string {
     </button>
   </div>
 
-  <!-- 필터 탭 -->
+  <!-- 부서 필터 -->
+  <div class="mb-2">
+    <?php foreach ([
+        'all'       => '전체 부서',
+        'sales'     => '📊 영업팀',
+        'marketing' => '✍️ 마케팅팀',
+        'chm'       => '🤝 고객관리팀',
+    ] as $d => $label): ?>
+      <a href="?filter=<?= $filter ?>&dept=<?= $d ?>"
+         class="btn btn-sm me-1 <?= $d === $dept ? 'btn-info text-dark fw-semibold' : 'btn-outline-secondary' ?>">
+        <?= $label ?>
+      </a>
+    <?php endforeach; ?>
+  </div>
+
+  <!-- 상태 필터 탭 -->
   <div class="mb-4">
     <?php foreach ([
         'pending'        => '대기 중',
@@ -122,7 +141,7 @@ function formatAudience(string $raw): string {
         'regen_requested'=> '재생성 요청',
         'all'            => '전체',
     ] as $f => $label): ?>
-      <a href="?filter=<?= $f ?>"
+      <a href="?filter=<?= $f ?>&dept=<?= $dept ?>"
          class="btn btn-sm me-1 <?= $f === $filter ? 'btn-primary' : 'btn-outline-secondary' ?>">
         <?= $label ?>
       </a>
