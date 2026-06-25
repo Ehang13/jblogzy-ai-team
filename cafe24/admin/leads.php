@@ -169,7 +169,7 @@ $industryColors = [
               <td>
                 <span class="small"><?= htmlspecialchars($lead['contact'] ?? '-') ?></span>
               </td>
-              <td><span class="small text-muted"><?= htmlspecialchars($lead['platform'] ?? '-') ?></span></td>
+              <td style="color:#94a3b8;font-size:.85rem"><?= htmlspecialchars($lead['platform'] ?: 'naver_place') ?></td>
               <td>
                 <?php if ($lead['email_body']): ?>
                   <button class="btn btn-sm btn-outline-info py-0"
@@ -208,7 +208,7 @@ $industryColors = [
                 ?>
                 <span class="badge bg-<?= $color ?>"><?= $label ?></span>
               </td>
-              <td><span class="small text-muted"><?= date('m.d', strtotime($lead['created_at'])) ?></span></td>
+              <td style="color:#94a3b8;font-size:.85rem"><?= $lead['created_at'] ? date('m.d', strtotime($lead['created_at'])) : '-' ?></td>
               <td>
                 <?php if ($lead['email_status'] === 'pending'): ?>
                   <button onclick="approveLead(<?= $lead['id'] ?>)"
