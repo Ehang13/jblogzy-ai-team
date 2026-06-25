@@ -4,6 +4,15 @@
 import 'dotenv/config';
 import { sendMail } from '../core/mailer.js';
 
+function mdToHtml(text) {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')   // **bold**
+    .replace(/\*(.+?)\*/g,     '<em>$1</em>')            // *italic*
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g,                 // [text](url)
+             '<a href="$2" style="color:#3b82f6">$1</a>')
+    .replace(/\n/g, '<br>');
+}
+
 const API_BASE = process.env.CAFE24_API_URL.replace('/report.php', '');
 const API_KEY  = process.env.CAFE24_API_KEY;
 
@@ -24,7 +33,7 @@ async function sendApprovedLeads() {
     const lead = batch[i];
     try {
       await sendMail({ to: lead.contact, subject: lead.email_subject,
-                       html: lead.email_body.replace(/\n/g, '<br>'), text: lead.email_body });
+                       html: mdToHtml(lead.email_body), text: lead.email_body });
       await fetch(`${API_BASE}/mark_lead_sent.php`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Api-Key': API_KEY },
         body: JSON.stringify({ lead_id: lead.id }),
@@ -49,7 +58,7 @@ async function sendApprovedChmEmails() {
     const item = batch[i];
     try {
       await sendMail({ to: item.to, subject: item.subject,
-                       html: item.body.replace(/\n/g, '<br>'), text: item.body });
+                       html: mdToHtml(item.body), text: item.body });
       await fetch(`${API_BASE}/mark_chm_sent.php`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Api-Key': API_KEY },
         body: JSON.stringify({ content_queue_id: item.id }),
