@@ -47,6 +47,29 @@ async function handleApproval(contentId, action) {
   }
 }
 
+// 영업팀 자동 승인 토글
+async function toggleSalesAutoApprove(enabled) {
+  const label = document.getElementById('salesAutoApproveLabel');
+  try {
+    const res = await fetch('../api/set_setting.php', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ key: 'sales_auto_approve', value: enabled ? '1' : '0' }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      if (label) {
+        label.textContent = enabled ? '자동 승인 ON' : '수동 승인';
+        label.className   = `badge ${enabled ? 'bg-success' : 'bg-secondary'}`;
+      }
+    } else {
+      alert('설정 변경 실패: ' + (data.error || '알 수 없는 오류'));
+    }
+  } catch (e) {
+    alert('네트워크 오류가 발생했습니다.');
+  }
+}
+
 // CHM 자동 승인 토글
 async function toggleAutoApprove(enabled) {
   const label = document.getElementById('autoApproveLabel');

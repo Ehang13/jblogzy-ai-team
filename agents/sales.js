@@ -51,6 +51,20 @@ const ALL_REGIONS = [
 ];
 
 // ─────────────────────────────────────────────
+// 영업팀 자동 승인 설정 조회
+// ─────────────────────────────────────────────
+async function isSalesAutoApproveEnabled() {
+  try {
+    const base = process.env.CAFE24_API_URL.replace('/report.php', '');
+    const res  = await fetch(`${base}/get_setting.php?key=sales_auto_approve`, {
+      headers: { 'X-Api-Key': process.env.CAFE24_API_KEY },
+    });
+    const json = await res.json();
+    return json.value === '1';
+  } catch { return false; }
+}
+
+// ─────────────────────────────────────────────
 // 날짜 기반 결정론적 순환 (파일 불필요 → GitHub Actions 호환)
 // ─────────────────────────────────────────────
 function pickTodaysIndustries() {
@@ -267,6 +281,9 @@ export async function run() {
 
   await notifyStart(DEPARTMENT, '일일 리드 발굴');
 
+  const autoApprove = await isSalesAutoApproveEnabled();
+  console.log(`  자동 승인: ${autoApprove ? 'ON' : 'OFF'}`);
+
   const todaysIndustries = pickTodaysIndustries();
   const todaysRegion     = pickTodaysRegion();
 
@@ -288,6 +305,7 @@ export async function run() {
           const { subject, body } = parseEmailDraft(rawEmail);
 
           // naver.com → pending (계정 존재 확실), gmail.com → guess (추정 주소)
+          // 자동승인 ON 이면 두 주소 모두 approved로 바로 저장
           for (const [emailDomain, emailStatus] of [['naver.com', 'pending'], ['gmail.com', 'guess']]) {
             const email = `${lead.blogId}@${emailDomain}`;
             await send({
@@ -299,7 +317,7 @@ export async function run() {
               lead_platform:       'naver_place',
               lead_contact:        email,
               lead_contact_type:   'email',
-              lead_email_status:   emailStatus,
+              lead_email_status:   autoApprove ? 'approved' : emailStatus,
               lead_source_url:     lead.placeUrl,
               lead_email_subject:  subject,
               lead_email_body:     body,

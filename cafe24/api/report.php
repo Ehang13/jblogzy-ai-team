@@ -55,7 +55,7 @@ $leadContactType = trim($data['lead_contact_type'] ?? 'email');
 $leadSourceUrl  = trim($data['lead_source_url'] ?? '');
 $leadEmailSubject = $data['lead_email_subject'] ?? '';
 $leadEmailBody  = $data['lead_email_body']      ?? '';
-$leadEmailStatus = in_array($data['lead_email_status'] ?? '', ['pending', 'guess'])
+$leadEmailStatus = in_array($data['lead_email_status'] ?? '', ['pending', 'guess', 'approved'])
     ? $data['lead_email_status'] : 'pending';
 $benefitType  = trim($data['benefit_type']  ?? '');
 $benefitValue = trim($data['benefit_value'] ?? '');

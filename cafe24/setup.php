@@ -132,7 +132,8 @@ $sqls = [
     ",
     'settings 초기값' => "
         INSERT IGNORE INTO settings (key_name, value) VALUES
-            ('chm_auto_approve', '0')
+            ('chm_auto_approve', '0'),
+            ('sales_auto_approve', '0')
     ",
     'API 키 초기값 삽입' => "
         INSERT IGNORE INTO api_keys (key_value, label)
