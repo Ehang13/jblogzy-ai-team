@@ -1,9 +1,7 @@
 name: 전략기획팀 - 주간 시스템 감사
 
 on:
-  schedule:
-    - cron: '0 0 * * 1'    # UTC 00:00 (월) = KST 09:00 (월)
-  workflow_dispatch:
+  workflow_dispatch:   # morning-bundle이 매일 09:00 KST에 실행 (월=전체분석, 평일=일일점검)
 
 concurrency:
   group: strategy

@@ -1,9 +1,7 @@
 name: 마케팅팀 - 콘텐츠 생성
 
 on:
-  schedule:
-    - cron: '0 1 * * *'    # 10:00 KST
-  workflow_dispatch:
+  workflow_dispatch:   # morning-bundle이 매일 09:00 KST에 실행
 
 concurrency:
   group: marketing

@@ -1,0 +1,68 @@
+name: 조간 일괄 실행
+
+on:
+  schedule:
+    - cron: '0 0 * * *'   # UTC 00:00 = KST 09:00 (매일)
+  workflow_dispatch:
+
+concurrency:
+  group: morning-bundle
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    env:
+      ANTHROPIC_API_KEY:   ${{ secrets.ANTHROPIC_API_KEY }}
+      CAFE24_API_URL:      ${{ secrets.CAFE24_API_URL }}
+      CAFE24_API_KEY:      ${{ secrets.CAFE24_API_KEY }}
+      NAVER_CLIENT_ID:     ${{ secrets.NAVER_CLIENT_ID }}
+      NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+      JBLOGZY_API_URL:     ${{ secrets.JBLOGZY_API_URL }}
+      JBLOGZY_API_KEY:     ${{ secrets.JBLOGZY_API_KEY }}
+      SMTP_HOST:           ${{ secrets.SMTP_HOST }}
+      SMTP_PORT:           ${{ secrets.SMTP_PORT }}
+      SMTP_SECURE:         ${{ secrets.SMTP_SECURE }}
+      SMTP_USER:           ${{ secrets.SMTP_USER }}
+      SMTP_PASS:           ${{ secrets.SMTP_PASS }}
+      EMAIL_FROM:          ${{ secrets.EMAIL_FROM }}
+      EMAIL_FROM_NAME:     ${{ secrets.EMAIL_FROM_NAME }}
+      GITHUB_TOKEN:        ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: 의존성 설치
+        run: npm ci
+
+      - name: Playwright 설치 (영업팀)
+        run: npx playwright install chromium
+
+      - name: 영업팀
+        continue-on-error: true
+        run: node agents/sales.js
+
+      - name: 마케팅팀
+        continue-on-error: true
+        run: node agents/marketing.js
+
+      - name: 고객관리팀
+        continue-on-error: true
+        run: node agents/chm.js
+
+      - name: 전략기획팀
+        continue-on-error: true
+        run: node agents/strategy.js

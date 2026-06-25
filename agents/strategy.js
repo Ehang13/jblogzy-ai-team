@@ -295,7 +295,9 @@ if (process.argv[1].endsWith('파일명.js')) run().catch(console.error);
 
 // ─────────────────────────────────────────────────────────────────────────
 export async function run() {
-  console.log('\n🔍 [전략기획팀] 주간 전략 분석 시작');
+  const isMonday = new Date().getUTCDay() === 1; // UTC 월요일 = KST 월요일 09:00
+
+  console.log(`\n🔍 [전략기획팀] ${isMonday ? '주간 전략 분석' : '일일 현황 점검'} 시작`);
 
   const [auditData, memberStats, activeGoal] = await Promise.allSettled([
     fetchAuditData(),
@@ -304,7 +306,7 @@ export async function run() {
   ]).then(results => results.map(r => r.status === 'fulfilled' ? r.value : null));
 
   if (!auditData) {
-    await notifyError(DEPARTMENT, '주간 전략 분석', new Error('운영 데이터 조회 실패'));
+    await notifyError(DEPARTMENT, isMonday ? '주간 전략 분석' : '일일 현황 점검', new Error('운영 데이터 조회 실패'));
     return;
   }
 
@@ -312,7 +314,45 @@ export async function run() {
   const goal    = activeGoal;
   const isFirstRun = !goal;
 
-  console.log(`  → 유료 ${members.paid}명 / 체험 ${members.trial}명 / 목표: ${goal ? goal.title : '미수립'}`);
+  console.log(`  → 유료 ${members.paid}명 / 체험 ${members.trial}명`);
+
+  // ── 평일: 일일 현황 점검 (Haiku, 빠름) ──────────────────────────────
+  if (!isMonday) {
+    const quickSummary = await ask(`
+오늘 jblogzy AI팀 운영 결과를 간략히 점검하세요 (150자 이내).
+
+회원현황: 유료 ${members.paid}명 / 체험 ${members.trial}명
+오늘 통계: ${JSON.stringify(auditData)}
+
+판단:
+- 🔴 즉시 보고 필요: 에러 다수, 리드 0건, 이메일 발송 실패 등
+- 🟢 정상: 별다른 이슈 없음
+
+상태 이모지 + 한 줄 요약만 출력.
+`, 200);
+
+    const isCritical = quickSummary.includes('🔴');
+    await send({
+      department: DEPARTMENT,
+      task_type:  '일일 현황 점검',
+      status:     'completed',
+      summary:    quickSummary.trim(),
+    });
+
+    if (isCritical && ADMIN_EMAIL) {
+      await sendMail({
+        to:      ADMIN_EMAIL,
+        subject: '[긴급] jblogzy AI팀 이상 감지',
+        html:    mdToHtml(quickSummary),
+        text:    quickSummary,
+      }).catch(e => console.error('  → 이메일 발송 실패:', e.message));
+    }
+
+    console.log(`✅ [전략기획팀] 일일 점검 완료: ${quickSummary.slice(0, 60)}\n`);
+    return;
+  }
+
+  // ── 이하 월요일 전체 분석 ─────────────────────────────────────────────
 
   // ── Claude 프롬프트 ────────────────────────────────────────────────────
   const prompt = isFirstRun
