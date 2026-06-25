@@ -98,6 +98,14 @@ if ($dept === 'sales') {
     ");
     $stmt->execute();
     $extra = $stmt->fetchAll();
+} elseif ($dept === 'ceo') {
+    $stmt = $pdo->query("
+        SELECT id, title, body, detail, approval_status, created_at
+        FROM content_queue
+        WHERE department='ceo' AND content_type='proposal'
+        ORDER BY created_at DESC LIMIT 30
+    ");
+    $extra = $stmt->fetchAll();
 }
 
 function timeAgo(string $dt): string {
@@ -319,10 +327,47 @@ $statusBadge = [
           <?php endif; ?>
 
         <?php elseif ($dept === 'ceo'): ?>
+
+          <!-- 승인 대기 제안 -->
+          <?php
+            $pendingProposals = array_filter($extra, fn($p) => $p['approval_status'] === 'pending');
+            $doneProposals    = array_filter($extra, fn($p) => $p['approval_status'] !== 'pending');
+          ?>
+          <?php if (!empty($pendingProposals)): ?>
+            <div class="d-flex align-items-center gap-2 mb-3">
+              <h6 class="fw-bold mb-0">⚠️ 승인 대기 제안</h6>
+              <span class="badge bg-warning text-dark"><?= count($pendingProposals) ?>건</span>
+            </div>
+            <?php foreach ($pendingProposals as $p):
+              $detail = json_decode($p['detail'] ?? '{}', true);
+              $cost   = $detail['estimated_cost'] ?? '';
+            ?>
+              <div class="p-3 mb-3 rounded" id="proposal-<?= $p['id'] ?>" style="background:#1e293b;border:1px solid #f59e0b">
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                  <div>
+                    <span class="badge bg-warning text-dark me-1">비용 발생</span>
+                    <?php if ($cost): ?><span class="badge bg-secondary"><?= htmlspecialchars($cost) ?></span><?php endif; ?>
+                    <div class="fw-bold mt-1 small"><?= htmlspecialchars($p['title']) ?></div>
+                  </div>
+                  <div class="small text-muted text-nowrap ms-2"><?= timeAgo($p['created_at']) ?></div>
+                </div>
+                <div class="small text-muted mb-3" style="white-space:pre-wrap;font-size:0.78rem;line-height:1.6">
+                  <?= htmlspecialchars(mb_substr($p['body'] ?? '', 0, 300)) ?>
+                </div>
+                <div class="d-flex gap-2">
+                  <button class="btn btn-sm btn-success" onclick="handleProposal(<?= $p['id'] ?>, 'approve')">승인</button>
+                  <button class="btn btn-sm btn-outline-danger" onclick="handleProposal(<?= $p['id'] ?>, 'reject')">반려</button>
+                </div>
+              </div>
+            <?php endforeach; ?>
+            <hr style="border-color:#334155">
+          <?php endif; ?>
+
+          <!-- 최신 감사 리포트 -->
           <h6 class="fw-bold mb-3">주간 자체 감사 리포트</h6>
           <?php
             $auditLogs = array_filter($logs, fn($l) => $l['task_type'] === '주간 자체 감사');
-            $latest = reset($auditLogs);
+            $latest    = reset($auditLogs);
           ?>
           <?php if (!$latest): ?>
             <div class="text-center text-muted py-4">아직 감사 리포트가 없습니다.<br><small>매주 월요일 09:00에 자동 생성됩니다.</small></div>
@@ -343,6 +388,19 @@ $statusBadge = [
                 </div>
               <?php endforeach; ?>
             <?php endif; ?>
+          <?php endif; ?>
+
+          <!-- 처리 완료 제안 -->
+          <?php if (!empty($doneProposals)): ?>
+            <h6 class="fw-bold mt-4 mb-2 text-muted">처리 완료 제안</h6>
+            <?php foreach ($doneProposals as $p): ?>
+              <div class="p-2 mb-2 rounded d-flex justify-content-between align-items-center" style="background:#1e293b;border:1px solid #334155">
+                <div class="small"><?= htmlspecialchars($p['title']) ?></div>
+                <span class="badge <?= $p['approval_status'] === 'approved' ? 'bg-success' : 'bg-secondary' ?> ms-2">
+                  <?= $p['approval_status'] === 'approved' ? '승인됨' : '반려됨' ?>
+                </span>
+              </div>
+            <?php endforeach; ?>
           <?php endif; ?>
 
         <?php endif; ?>

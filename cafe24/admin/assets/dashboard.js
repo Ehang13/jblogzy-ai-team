@@ -212,6 +212,33 @@ async function approveLead(leadId) {
   }
 }
 
+// 자체 감사 비용 제안 승인/반려
+async function handleProposal(id, action) {
+  const label = action === 'approve' ? '승인' : '반려';
+  if (!confirm(`이 제안을 ${label}하시겠습니까?`)) return;
+
+  try {
+    const res  = await fetch('../api/handle_proposal.php', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ content_id: id, action }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      const card = document.getElementById(`proposal-${id}`);
+      if (card) {
+        card.style.opacity    = '0.4';
+        card.style.transition = 'opacity 0.4s';
+        setTimeout(() => card.remove(), 400);
+      }
+    } else {
+      alert('처리 실패: ' + (data.error || '알 수 없는 오류'));
+    }
+  } catch (e) {
+    alert('네트워크 오류가 발생했습니다.');
+  }
+}
+
 // 초기화
 document.addEventListener('DOMContentLoaded', () => {
   updateLastUpdatedTime();
