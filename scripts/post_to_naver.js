@@ -149,28 +149,63 @@ async function inputTags(page, tags) {
   } catch {}
 }
 
+// JS로 "발행" 텍스트를 가진 요소를 DOM 전체에서 탐색해 클릭
+async function jsClickByText(page, text) {
+  return page.evaluate((t) => {
+    const all = [...document.querySelectorAll('button, a, span, div')];
+    // 정확히 일치하는 것 우선
+    let el = all.find(e => (e.textContent || '').trim() === t);
+    // 없으면 포함 검색
+    if (!el) el = all.find(e => (e.textContent || '').trim().includes(t));
+    if (!el) return false;
+    el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    return true;
+  }, text);
+}
+
 // 발행 버튼 클릭 (default content, 2단계)
-// 저장/발행 버튼은 mainFrame 바깥(outer page)에 위치 - Python 코드 분석 결과
 async function clickPublish(page) {
-  // 1차: 우측 상단 '발행' 버튼
+  // 1차: 우측 상단 '발행' 버튼 — 여러 전략 순차 시도
+  let clicked1 = false;
+
+  // 전략 1: getByRole
   try {
-    await page.locator('button:has-text("발행")').first().click({ timeout: 5000 });
-  } catch {
-    throw new Error('1차 발행 버튼을 찾을 수 없습니다');
+    await page.getByRole('button', { name: '발행' }).first().click({ timeout: 3000 });
+    clicked1 = true;
+  } catch {}
+
+  // 전략 2: locator filter
+  if (!clicked1) {
+    try {
+      await page.locator('button, a').filter({ hasText: /^발행$/ }).first().click({ timeout: 3000 });
+      clicked1 = true;
+    } catch {}
   }
 
-  // 발행 설정 패널 열릴 때까지 대기
-  await page.waitForTimeout(2000);
+  // 전략 3: JS DOM 전체 탐색
+  if (!clicked1) {
+    clicked1 = await jsClickByText(page, '발행');
+  }
 
-  // 2차: 패널 내 '✓ 발행' 확인 버튼 (마지막 '발행' 텍스트 버튼)
+  if (!clicked1) throw new Error('1차 발행 버튼을 찾을 수 없습니다');
+
+  // 발행 설정 패널 열릴 때까지 대기
+  await page.waitForTimeout(2500);
+
+  // 2차: 패널 내 확인 발행 버튼
+  let clicked2 = false;
+
   try {
-    const btns = page.locator('button:has-text("발행")');
+    const btns = page.locator('button, a').filter({ hasText: /^발행$/ });
     const count = await btns.count();
     if (count > 0) {
-      await btns.nth(count - 1).click({ timeout: 5000 });
+      await btns.nth(count - 1).click({ timeout: 3000 });
+      clicked2 = true;
     }
-  } catch {
-    throw new Error('2차 발행 버튼(패널)을 찾을 수 없습니다');
+  } catch {}
+
+  if (!clicked2) {
+    clicked2 = await jsClickByText(page, '발행');
   }
 
   await page.waitForTimeout(3000);
