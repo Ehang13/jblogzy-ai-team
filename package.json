@@ -1,0 +1,22 @@
+{
+  "name": "jblogzy-ai-team",
+  "version": "1.0.0",
+  "description": "jblogzy 24시간 AI 자동화 팀 - 영업/마케팅/고객관리 에이전트",
+  "main": "agents/orchestrator.js",
+  "type": "module",
+  "scripts": {
+    "start": "node agents/orchestrator.js",
+    "marketing": "node agents/marketing.js",
+    "sales": "node agents/sales.js",
+    "chm": "node agents/chm.js",
+    "send-emails": "node scripts/send_emails.js",
+    "deploy": "powershell -ExecutionPolicy Bypass -File deploy.ps1"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.30.0",
+    "dotenv": "^16.4.0",
+    "node-cron": "^4.5.0",
+    "nodemailer": "^9.0.1",
+    "playwright": "^1.61.1"
+  }
+}
