@@ -1,6 +1,6 @@
 // 전략기획팀 에이전트 - 매주 월요일 09:00 실행
-// 전체 시스템 설계 + 7일 운영 통계를 Claude가 분석해 문제점·설계 의문점·개선 제안을 리포트
-// 비용 발생 제안은 대시보드 승인 큐로 분리 전송
+// 비즈니스 현황 분석 → 목표 수립 → 부서별 KPI → 시스템 갭 파악 → 대시보드 리포트
+// 비용 발생 제안은 승인 큐로 분리, 목표 미수립 시 목표 제안 → 승인 후 활성화
 
 import 'dotenv/config';
 import { ask } from '../core/claude.js';
@@ -11,60 +11,96 @@ import { ALL_INDUSTRIES, ALL_REGIONS } from './sales.js';
 const DEPARTMENT      = 'strategy';
 const CAFE24_API_BASE = process.env.CAFE24_API_URL.replace('/report.php', '');
 const CAFE24_API_KEY  = process.env.CAFE24_API_KEY;
+const JBLOGZY_API_URL = process.env.JBLOGZY_API_URL;
+const JBLOGZY_API_KEY = process.env.JBLOGZY_API_KEY;
 const ADMIN_EMAIL     = process.env.SMTP_USER;
 
-// 시스템 전체 설계 현황 — Claude가 설계 근거를 파악하고 의문을 제기하기 위한 컨텍스트
-const SYSTEM_DESIGN = {
-  영업팀: {
-    총업종수: ALL_INDUSTRIES.length,
-    실행당처리업종: ALL_INDUSTRIES.length,   // pickTodaysIndustries()가 전체 18개 반환
-    업종당발굴리드수: 5,
-    하루실행횟수: 4,                          // 08:00 / 12:00 / 16:00 / 20:00
-    총지역수: ALL_REGIONS.length,
-    지역단위: '구/시 단위 혼합 (예: 서울 강남구, 수원시)',
-    지역순환방식: '날짜 기반 순환 (하루 1개 지역)',
-    이메일유형: [
-      'blogId@naver.com — 상태:pending (계정 존재 가능)',
-      'blogId@gmail.com — 상태:guess (추정 주소, 실제 여부 불명)',
-    ],
-    업종목록: ALL_INDUSTRIES.map(i => i.name),
-    지역목록: ALL_REGIONS,
-  },
-  마케팅팀: {
-    총섹터수: 18,
-    실행당섹터수: 3,      // 날짜 × 3 순환
-    하루실행횟수: 1,      // 10:00
-    플랫폼: '네이버 블로그',
-    콘텐츠유형: '블로그 포스팅 초안',
-    자동승인: '설정 가능 (marketing_auto_approve 토글)',
-  },
-  고객관리팀: {
-    위험도기준: {
-      HIGH: '70점 이상 → 즉시 발송',
-      MEDIUM: '40~69점 + 구독 만료 7일 이내만 발송',
-      LOW: '발송 안 함',
-    },
-    중복방지쿨다운: '30일 (같은 회원에게 30일 내 재발송 없음)',
-    실행당최대회원수: 30,
-    하루실행횟수: 1,      // 18:00
-    이메일발송시간: '21:00 (승인된 건 10분 배치, 건당 90초 간격)',
-    혜택정책: {
-      MEDIUM: '다음 갱신 시 10% 할인',
-      LOW: '지인 추천 시 추천인·피추천인 각 10% 혜택',
-    },
-  },
-  자체감사: {
-    실행주기: '매주 월요일 09:00',
-    분석기간: '최근 7일',
-    리포트발송: '대시보드(ceo탭) + 관리자 이메일',
-  },
-  현재없는부서: [
-    '고객 피드백/후기 수집 에이전트',
-    '경쟁사 모니터링 에이전트',
-    '결제/구독 만료 예측 에이전트',
+// ── 비즈니스 고정 컨텍스트 ───────────────────────────────────────────────
+const BUSINESS = {
+  서비스명: 'jblogzy.com',
+  서비스설명: '자영업자 대상 네이버 블로그 AI 자동화 SaaS',
+  운영형태: '1인 운영 (개발·운영·마케팅 모두 혼자)',
+  출시상태: '정식 출시 완료',
+  무료체험: '가입 후 3일 무료 (이후 유료 플랜 선택)',
+  자동결제: '없음 (매월 수동 결제)',
+  요금제: [
+    { 이름: 'Basic',    월정액: 39000, 원고생성: '월 90회',  특이사항: '기본 기능' },
+    { 이름: 'Premium',  월정액: 69000, 원고생성: '월 300회', 특이사항: '방문자 유입 품앗이·콘텐츠 플래너 포함, 인기 플랜' },
+    { 이름: 'Business', 월정액: 79000, 원고생성: '월 600회', 특이사항: '다계정·전담 매니저·맞춤 세팅 지원' },
+  ],
+  주요기능: [
+    '네이버 블로그 AI 글 생성 (음식리뷰/브랜딩/정보글 등)',
+    '스케줄 자동 발행',
+    'AI 브랜딩 플래너 (월간 콘텐츠 제목 자동 생성)',
+    'AI 썸네일 자동 생성',
+    '네이버 플레이스 URL → 가게 정보 자동 추출',
+    '방문자 유입 품앗이 (Premium+)',
   ],
 };
 
+// ── AI 자동화 팀 설계 현황 ───────────────────────────────────────────────
+const AI_TEAM = {
+  영업팀: {
+    역할: '네이버 플레이스에서 잠재 고객 발굴 → 이메일 초안 생성',
+    총업종수: ALL_INDUSTRIES.length,
+    하루실행횟수: 4,
+    실행당처리업종: ALL_INDUSTRIES.length,
+    업종당리드수: 5,
+    총지역수: ALL_REGIONS.length,
+    이메일유형: ['naver.com (pending)', 'gmail.com (guess — 추정 주소)'],
+    현재문제점: '이메일 발송 후 답장 여부·전환 여부 추적 불가',
+  },
+  마케팅팀: {
+    역할: '네이버 블로그에 jblogzy 홍보 포스팅 + SNS 캡션 생성',
+    하루실행횟수: 1,
+    실행당섹터수: 3,
+    총섹터수: 18,
+    현재문제점: '블로그 포스팅이 실제 검색 유입·가입 전환으로 이어지는지 측정 불가',
+  },
+  고객관리팀: {
+    역할: '유료 회원 이탈 방지 리텐션 이메일 생성·발송',
+    하루실행횟수: 1,
+    위험도기준: { HIGH: '70점+', MEDIUM: '40~69점 + 만료 7일 이내', LOW: '미발송' },
+    쿨다운: '30일',
+    현재문제점: '유료 구독자 0명 → 사실상 미운영 상태. 3일 무료 체험 만료 전 전환 유도 기능 없음',
+  },
+  전략기획팀: {
+    역할: '주간 시스템 전체 감사 + 목표 수립·추적 + 개선 제안',
+    실행주기: '매주 월요일 09:00',
+  },
+};
+
+// ── 목표 관련 ────────────────────────────────────────────────────────────
+async function fetchActiveGoal() {
+  try {
+    const res  = await fetch(`${CAFE24_API_BASE}/get_setting.php?key=strategy_active_goal`, {
+      headers: { 'X-Api-Key': CAFE24_API_KEY },
+    });
+    const data = await res.json();
+    return data.value ? JSON.parse(data.value) : null;
+  } catch {
+    return null;
+  }
+}
+
+// ── jblogzy 회원 현황 조회 ───────────────────────────────────────────────
+async function fetchMemberStats() {
+  try {
+    const res = await fetch(JBLOGZY_API_URL, {
+      headers: { 'X-Api-Key': JBLOGZY_API_KEY },
+    });
+    if (!res.ok) return null;
+    const { members } = await res.json();
+    const paid  = members.filter(m => m.sub_status === 'active').length;
+    const trial = members.filter(m => m.sub_status === 'trialing').length;
+    const total = members.length;
+    return { total, paid, trial, expired: total - paid - trial };
+  } catch {
+    return null;
+  }
+}
+
+// ── 운영 통계 조회 ────────────────────────────────────────────────────────
 async function fetchAuditData() {
   const res = await fetch(`${CAFE24_API_BASE}/fetch_audit_data.php`, {
     headers: { 'X-Api-Key': CAFE24_API_KEY },
@@ -73,19 +109,17 @@ async function fetchAuditData() {
   return res.json();
 }
 
-// Claude 응답에서 [비용발생: ...] 태그가 붙은 항목 추출
-function extractCostProposals(reportText) {
+// ── [비용발생] 태그 항목 파싱 ────────────────────────────────────────────
+function extractCostProposals(text) {
   const proposals = [];
-  // "- 제안 내용 [비용발생: 예상 규모]" 패턴 매칭
   const regex = /[-•]\s*(.+?)\[비용발생:\s*([^\]]+)\]/g;
   let m;
-  while ((m = regex.exec(reportText)) !== null) {
+  while ((m = regex.exec(text)) !== null) {
     const title = m[1].replace(/\*\*/g, '').trim().slice(0, 100);
     const cost  = m[2].trim();
-    // 제목 뒤의 설명 문장 수집 (최대 300자)
-    const startIdx = m.index + m[0].length;
-    const nextBullet = reportText.indexOf('\n-', startIdx);
-    const desc = reportText.slice(startIdx, nextBullet > 0 ? nextBullet : startIdx + 300).trim();
+    const startIdx  = m.index + m[0].length;
+    const nextBullet = text.indexOf('\n-', startIdx);
+    const desc = text.slice(startIdx, nextBullet > 0 ? nextBullet : startIdx + 300).trim();
     proposals.push({ title, cost, description: m[0].trim() + (desc ? '\n' + desc : '') });
   }
   return proposals;
@@ -102,9 +136,7 @@ async function submitProposal(proposal) {
         estimated_cost: proposal.cost,
       }),
     });
-  } catch {
-    // 제안 저장 실패는 전체 실행을 중단시키지 않음
-  }
+  } catch { /* 전체 실행 중단 없이 건너뜀 */ }
 }
 
 function mdToHtml(text) {
@@ -112,113 +144,161 @@ function mdToHtml(text) {
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
     .replace(/^### (.+)$/gm, '<h3 style="color:#93c5fd;margin-top:1em">$1</h3>')
-    .replace(/^## (.+)$/gm,  '<h2 style="color:#60a5fa;margin-top:1.2em">$2</h2>')
+    .replace(/^## (.+)$/gm,  '<h2 style="color:#60a5fa;margin-top:1.2em">$1</h2>')
     .replace(/^# (.+)$/gm,   '<h1 style="color:#3b82f6">$1</h1>')
     .replace(/\n/g, '<br>');
 }
 
+// ─────────────────────────────────────────────────────────────────────────
 export async function run() {
-  console.log('\n🔍 [전략기획팀] 주간 전체 시스템 분석 시작');
+  console.log('\n🔍 [전략기획팀] 주간 전략 분석 시작');
 
-  let auditData;
-  try {
-    auditData = await fetchAuditData();
-  } catch (err) {
-    await notifyError(DEPARTMENT, '주간 자체 감사', err);
+  const [auditData, memberStats, activeGoal] = await Promise.allSettled([
+    fetchAuditData(),
+    fetchMemberStats(),
+    fetchActiveGoal(),
+  ]).then(results => results.map(r => r.status === 'fulfilled' ? r.value : null));
+
+  if (!auditData) {
+    await notifyError(DEPARTMENT, '주간 전략 분석', new Error('운영 데이터 조회 실패'));
     return;
   }
 
-  console.log(`  → 영업팀 ${auditData.sales.total_leads}건 / 마케팅 ${auditData.marketing.total_contents}건 / CHM ${auditData.chm.total_generated}건`);
+  const members = memberStats ?? { total: '조회 실패', paid: 0, trial: 0, expired: 0 };
+  const goal    = activeGoal;
+  const isFirstRun = !goal;
 
-  const report = await ask(`
-당신은 jblogzy AI 자동화 팀의 수석 감사관입니다.
-아래 두 가지를 종합해 주간 감사 리포트를 작성하세요:
-(1) 시스템 설계 현황 — 각 에이전트가 무엇을 어떻게 하는지
-(2) 지난 7일 실제 운영 통계
+  console.log(`  → 유료 ${members.paid}명 / 체험 ${members.trial}명 / 목표: ${goal ? goal.title : '미수립'}`);
 
----
-## 시스템 설계 현황
-${JSON.stringify(SYSTEM_DESIGN, null, 2)}
+  // ── Claude 프롬프트 ────────────────────────────────────────────────────
+  const prompt = isFirstRun
+    ? `
+당신은 jblogzy의 전략기획 총괄 임원입니다.
+아래 비즈니스 현황과 AI 자동화 팀 설계를 바탕으로 **최초 전략 계획서**를 작성하세요.
 
-## 지난 7일 운영 통계
+## 비즈니스 현황
+${JSON.stringify(BUSINESS, null, 2)}
+
+## AI 자동화 팀 현황
+${JSON.stringify(AI_TEAM, null, 2)}
+
+## 실제 회원 현황
+${JSON.stringify(members, null, 2)}
+
+## AI팀 지난 7일 운영 통계
 ${JSON.stringify(auditData, null, 2)}
 
 ---
-## 리포트 작성 지침
+## 작성 지침
 
-아래 5개 섹션을 순서대로 작성하세요.
+### 1. 현황 진단
+- 수치 기반으로 현재 상태 명확히 정리 (잘되고 있는 것 / 안 되고 있는 것)
 
-### 1. 운영 이상 징후
-- 통계 수치에서 발견된 문제 (중복, 편중, 낮은 승인률 등)
-- 이상 없으면 "이상 없음" 한 줄로 명시
+### 2. 90일 목표 수립
+- 현실적이고 구체적인 유료 구독자 수 목표 제시 (근거 포함)
+- 월별 세부 마일스톤 (1개월차 / 2개월차 / 3개월차)
+- 예상 월 매출 (모든 구독자가 Basic 기준 최소치)
 
-### 2. 시스템 설계 의문점
-- 설계 방식에 대한 "왜 이렇게?" 형태의 날카로운 질문
-- 예: "영업팀이 매 실행(하루 4회)마다 18개 업종 전체를 처리한다 — 하루 최대 720건 발굴 시도. 실제 처리 가능한 이메일 발송 용량과 비교했을 때 과잉 생성이 아닌가?"
-- 예: "지역이 하루 1개 지역으로만 고정된다면, 전국 ${ALL_REGIONS.length}개 지역을 모두 커버하는 데 ${ALL_REGIONS.length}일이 필요하다. 이 주기가 적절한가?"
-- 예: "gmail.com guess 주소는 존재 여부를 확인하지 않고 발송한다. 반송률이 높아질수록 발신 도메인 평판이 떨어질 수 있지 않은가?"
+### 3. 부서별 KPI (주간 기준)
+- 영업팀 / 마케팅팀 / 고객관리팀 각각에 수치 목표 부여
+- KPI가 달성되면 목표 달성 가능한지 논리적으로 연결
 
-### 3. 추가 부서/기능 필요 여부
-- 현재 없는 기능 중 jblogzy 성장에 실질적으로 기여할 수 있는 것
-- 각 제안에 예상 효과와 구현 복잡도를 명시
+### 4. 즉시 개선이 필요한 시스템 갭 (우선순위 순)
+- 현재 없는 기능 중 목표 달성에 가장 중요한 것들
+- 각 항목에 [무료] 또는 [비용발생: 예상 규모] 태그 명시
 
-### 4. 비용 효율화 방안
-- Claude API 호출 횟수, 이메일 발송량, GitHub Actions 실행 횟수 기준
-- 현재 추정 비용 구조와 절감 가능 포인트
+### 5. 전략기획팀 자체 발전 계획
+- 다음 4주간 전략기획팀이 스스로 개선할 항목
 
-### 5. 개선 제안 목록
-- 각 항목 앞에 반드시 아래 태그 중 하나를 붙일 것:
-  - [무료] — 코드 수정만으로 가능
-  - [비용발생: 월 X원 예상] — 추가 API, 서비스, 인프라 비용 발생
-- 비용 규모가 불확실하면 "소액" / "중간" / "상당" 으로 표기
+형식: 한국어, 경영 전략 보고서 톤, 800자 내외
+`
+    : `
+당신은 jblogzy의 전략기획 총괄 임원입니다.
+이번 주 진척도를 검토하고 전략을 조정하세요.
+
+## 현재 목표
+${JSON.stringify(goal, null, 2)}
+
+## 실제 회원 현황
+${JSON.stringify(members, null, 2)}
+
+## 비즈니스 컨텍스트
+${JSON.stringify(BUSINESS, null, 2)}
+
+## AI팀 지난 7일 운영 통계
+${JSON.stringify(auditData, null, 2)}
+
+## AI팀 설계 현황
+${JSON.stringify(AI_TEAM, null, 2)}
 
 ---
-형식: 한국어, 실무 보고서 톤, 총 700자 내외
-수치를 직접 인용할 것. 모호한 표현 금지.
-`);
+## 작성 지침
 
-  console.log('\n📋 감사 리포트 생성 완료');
+### 1. 이번 주 진척도
+- 목표 대비 실제 수치 비교 (달성률 %)
+- 잘된 점 / 미흡한 점
 
-  // 비용 발생 제안 추출 → 승인 큐에 저장
+### 2. 이탈 위험 신호
+- 목표 달성 경로에서 벗어나는 징후 (있을 경우)
+
+### 3. 이번 주 전술 조정
+- 각 부서에 이번 주 특별히 집중해야 할 것
+
+### 4. 개선 제안
+- [무료] 또는 [비용발생: 예상 규모] 태그 필수
+
+형식: 한국어, 600자 내외, 수치 직접 인용
+`;
+
+  const report = await ask(prompt);
+  console.log(`  → ${isFirstRun ? '최초 전략 계획서' : '주간 진척도 리포트'} 생성 완료`);
+
+  // 비용 제안 추출 → 승인 큐
   const costProposals = extractCostProposals(report);
-  if (costProposals.length > 0) {
-    console.log(`  → 비용 제안 ${costProposals.length}건 승인 큐에 저장`);
-    for (const p of costProposals) {
-      await submitProposal(p);
-    }
+  for (const p of costProposals) await submitProposal(p);
+
+  // 최초 실행 시: 목표를 '제안' 상태로 설정값 저장 (관리자 확인 후 직접 활성화)
+  if (isFirstRun) {
+    const goalMatch = report.match(/(\d+)명.*?(\d+)일|(\d+)명.*?(3개월|90일)/);
+    const proposed  = {
+      title:    '90일 목표 (전략기획팀 수립)',
+      source:   '아래 전략 계획서 참고',
+      status:   'proposed',
+      created:  new Date().toISOString(),
+    };
+    await fetch(`${CAFE24_API_BASE}/set_setting.php`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ key: 'strategy_active_goal', value: JSON.stringify(proposed) }),
+    }).catch(() => {});
   }
 
-  // 대시보드 전송
+  const taskType = isFirstRun ? '최초 전략 계획 수립' : '주간 전략 진척도 검토';
+
   await send({
     department: DEPARTMENT,
-    task_type:  '주간 시스템 감사',
+    task_type:  taskType,
     status:     'completed',
-    summary:    `주간 자체 감사 완료 — 영업 ${auditData.sales.total_leads}건 / 마케팅 ${auditData.marketing.total_contents}건 / CHM ${auditData.chm.total_generated}건 / 비용 제안 ${costProposals.length}건`,
+    summary:    `${taskType} 완료 — 유료 ${members.paid}명 / 체험 ${members.trial}명${costProposals.length > 0 ? ` / 비용 제안 ${costProposals.length}건` : ''}`,
     detail:     report,
   });
 
-  // 관리자 이메일 발송
   if (ADMIN_EMAIL) {
-    try {
-      const costNote = costProposals.length > 0
-        ? `<p style="background:#1e3a5f;padding:10px;border-radius:6px;margin-bottom:1em">⚠️ <strong>승인 대기 제안 ${costProposals.length}건</strong>이 대시보드에 등록되었습니다. 검토 후 승인해 주세요.</p>`
-        : '';
-      await sendMail({
-        to:      ADMIN_EMAIL,
-        subject: `[jblogzy 전략기획팀] 주간 시스템 감사 리포트`,
-        html:    costNote + mdToHtml(report),
-        text:    report,
-      });
-      console.log(`  → 이메일 발송 완료: ${ADMIN_EMAIL}`);
-    } catch (e) {
-      console.error('  → 이메일 발송 실패:', e.message);
-    }
+    const isFirst = isFirstRun;
+    const costNote = costProposals.length > 0
+      ? `<p style="background:#1e3a5f;padding:10px;border-radius:6px;margin-bottom:1em">⚠️ 승인 대기 제안 ${costProposals.length}건이 대시보드에 등록됐습니다.</p>`
+      : '';
+    await sendMail({
+      to:      ADMIN_EMAIL,
+      subject: `[jblogzy 전략기획팀] ${isFirst ? '최초 전략 계획서' : '주간 진척도 리포트'}`,
+      html:    costNote + mdToHtml(report),
+      text:    report,
+    }).catch(e => console.error('  → 이메일 발송 실패:', e.message));
   }
 
   console.log('✅ [전략기획팀] 완료\n');
 }
 
-// 직접 실행 지원
 if (process.argv[1].endsWith('strategy.js')) {
   run().catch(console.error);
 }

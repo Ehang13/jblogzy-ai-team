@@ -38,3 +38,5 @@ jobs:
           SMTP_PASS:           ${{ secrets.SMTP_PASS }}
           EMAIL_FROM:          ${{ secrets.EMAIL_FROM }}
           EMAIL_FROM_NAME:     ${{ secrets.EMAIL_FROM_NAME }}
+          JBLOGZY_API_URL:     ${{ secrets.JBLOGZY_API_URL }}
+          JBLOGZY_API_KEY:     ${{ secrets.JBLOGZY_API_KEY }}

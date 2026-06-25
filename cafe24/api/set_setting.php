@@ -16,7 +16,7 @@ $value = trim($data['value'] ?? '');
 
 if (!$name) { http_response_code(400); echo json_encode(['error' => 'key required']); exit; }
 
-$allowed = ['chm_auto_approve', 'sales_auto_approve', 'marketing_auto_approve'];
+$allowed = ['chm_auto_approve', 'sales_auto_approve', 'marketing_auto_approve', 'strategy_active_goal'];
 if (!in_array($name, $allowed)) {
     http_response_code(400); echo json_encode(['error' => 'Unknown setting']); exit;
 }

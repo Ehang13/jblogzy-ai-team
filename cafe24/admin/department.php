@@ -366,7 +366,7 @@ $statusBadge = [
           <!-- 최신 감사 리포트 -->
           <h6 class="fw-bold mb-3">주간 자체 감사 리포트</h6>
           <?php
-            $auditLogs = array_filter($logs, fn($l) => $l['task_type'] === '주간 시스템 감사');
+            $auditLogs = array_filter($logs, fn($l) => in_array($l['task_type'], ['주간 시스템 감사', '최초 전략 계획 수립', '주간 전략 진척도 검토']));
             $latest    = reset($auditLogs);
           ?>
           <?php if (!$latest): ?>
