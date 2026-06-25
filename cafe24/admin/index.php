@@ -90,6 +90,7 @@ $departments = [
     'sales'     => ['name' => '영업팀',      'icon' => '📊', 'color' => 'success'],
     'marketing' => ['name' => '마케팅팀',    'icon' => '✍️', 'color' => 'primary'],
     'chm'       => ['name' => '고객관리팀',  'icon' => '🤝', 'color' => 'warning'],
+    'ceo'       => ['name' => '자체 감사',   'icon' => '🔍', 'color' => 'secondary'],
 ];
 
 function timeAgo(string $datetime): string {

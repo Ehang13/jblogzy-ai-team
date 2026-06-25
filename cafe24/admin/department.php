@@ -6,7 +6,7 @@ if (!isset($_SESSION['admin_logged_in'])) {
     header('Location: index.php'); exit;
 }
 
-$allowed = ['sales', 'marketing', 'chm'];
+$allowed = ['sales', 'marketing', 'chm', 'ceo'];
 $dept    = $_GET['dept'] ?? '';
 if (!in_array($dept, $allowed)) {
     header('Location: index.php'); exit;
@@ -19,6 +19,7 @@ $deptInfo = [
     'sales'     => ['name' => '영업팀',     'icon' => '📊', 'color' => 'success'],
     'marketing' => ['name' => '마케팅팀',   'icon' => '✍️', 'color' => 'primary'],
     'chm'       => ['name' => '고객관리팀', 'icon' => '🤝', 'color' => 'warning'],
+    'ceo'       => ['name' => '자체 감사',  'icon' => '🔍', 'color' => 'secondary'],
 ][$dept];
 
 // 오늘 부서 통계
@@ -315,6 +316,33 @@ $statusBadge = [
                 <?php endif; ?>
               </div>
             <?php endforeach; ?>
+          <?php endif; ?>
+
+        <?php elseif ($dept === 'ceo'): ?>
+          <h6 class="fw-bold mb-3">주간 자체 감사 리포트</h6>
+          <?php
+            $auditLogs = array_filter($logs, fn($l) => $l['task_type'] === '주간 자체 감사');
+            $latest = reset($auditLogs);
+          ?>
+          <?php if (!$latest): ?>
+            <div class="text-center text-muted py-4">아직 감사 리포트가 없습니다.<br><small>매주 월요일 09:00에 자동 생성됩니다.</small></div>
+          <?php else: ?>
+            <div class="small text-muted mb-3"><?= timeAgo($latest['created_at']) ?> 생성</div>
+            <div class="p-3 rounded" style="background:#0f172a;white-space:pre-wrap;font-size:0.82rem;line-height:1.7;max-height:500px;overflow-y:auto">
+              <?= nl2br(htmlspecialchars($latest['detail'] ?? '')) ?>
+            </div>
+            <?php if (count($auditLogs) > 1): ?>
+              <h6 class="fw-bold mt-4 mb-2">이전 리포트</h6>
+              <?php foreach (array_slice(array_values($auditLogs), 1) as $old): ?>
+                <div class="p-2 mb-2 rounded" style="background:#1e293b;border:1px solid #334155;cursor:pointer"
+                     onclick="this.nextElementSibling.classList.toggle('d-none')">
+                  <div class="small text-muted"><?= timeAgo($old['created_at']) ?> 생성</div>
+                </div>
+                <div class="p-3 rounded d-none mb-3" style="background:#0f172a;white-space:pre-wrap;font-size:0.8rem;line-height:1.6">
+                  <?= nl2br(htmlspecialchars($old['detail'] ?? '')) ?>
+                </div>
+              <?php endforeach; ?>
+            <?php endif; ?>
           <?php endif; ?>
 
         <?php endif; ?>
