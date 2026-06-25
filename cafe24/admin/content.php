@@ -111,9 +111,14 @@ function formatAudience(string $raw): string {
         </span>
       </div>
     </div>
-    <button onclick="bulkRejectChm()" class="btn btn-sm btn-outline-danger">
-      🗑 CHM 대기 중 전체 반려
-    </button>
+    <div class="d-flex gap-2">
+      <button onclick="bulkRejectMarketing()" class="btn btn-sm btn-outline-danger">
+        🗑 마케팅팀 대기 중 전체 반려
+      </button>
+      <button onclick="bulkRejectChm()" class="btn btn-sm btn-outline-danger">
+        🗑 고객관리팀 대기 중 전체 반려
+      </button>
+    </div>
   </div>
 
   <!-- 부서 필터 -->
