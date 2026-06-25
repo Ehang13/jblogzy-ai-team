@@ -245,61 +245,96 @@ async function clickPublish(page, screenshotDir) {
     await page.screenshot({ path: `${screenshotDir}/2_after_first_click.png`, fullPage: false });
   }
 
-  // 2차: 패널 내 발행 확인 버튼
-  // 1차 버튼보다 아래(y 큰) 버튼이 패널 확인 버튼
-  let clicked2 = false;
-
-  const clicked2Result = await page.evaluate(() => {
-    const btns = [...document.querySelectorAll('button')];
-    const candidates = btns.filter(b => {
-      const txt = (b.textContent || '').trim();
-      const r = b.getBoundingClientRect();
-      return txt.includes('발행') && !txt.includes('예약') && !txt.includes('임시') && r.width > 0 && r.top > 100;
-    });
-    if (!candidates.length) return null;
-    // y 가장 아래 = 패널 확인 버튼
-    candidates.sort((a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top);
-    const target = candidates[0];
-    const r = target.getBoundingClientRect();
-    return { text: (target.textContent||'').trim(), x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2) };
-  });
-
-  if (clicked2Result) {
-    console.log(`  2차 패널 버튼: "${clicked2Result.text}" at (${clicked2Result.x}, ${clicked2Result.y})`);
-
-    // 스크린샷: 2차 클릭 직전 (패널 상태 확인)
-    if (screenshotDir) {
-      await page.screenshot({ path: `${screenshotDir}/2b_before_confirm.png`, fullPage: false });
-    }
-
-    // 버튼이 disabled인지 확인
-    const isDisabled = await page.evaluate(({ x, y }) => {
-      const el = document.elementFromPoint(x, y);
-      return el ? (el.disabled || el.getAttribute('aria-disabled') === 'true') : true;
-    }, { x: clicked2Result.x, y: clicked2Result.y });
-    console.log(`  확인 버튼 disabled: ${isDisabled}`);
-
-    // mouse.click()으로 실제 좌표 클릭 (React 이벤트 트리거)
-    await page.mouse.move(clicked2Result.x, clicked2Result.y);
-    await page.waitForTimeout(300);
-    await page.mouse.click(clicked2Result.x, clicked2Result.y);
-    clicked2 = true;
+  // 스크린샷: 2차 클릭 직전
+  if (screenshotDir) {
+    await page.screenshot({ path: `${screenshotDir}/2b_before_confirm.png`, fullPage: false });
   }
 
-  if (!clicked2) throw new Error('2차 발행 확인 버튼을 찾을 수 없습니다 — 패널이 열리지 않았거나 버튼 구조 변경');
+  // 전체 naver.com 응답 임시 로깅 (발행 API URL 특정용)
+  const publishResponses = [];
+  const responseListener = (response) => {
+    if (response.url().includes('naver.com')) {
+      publishResponses.push(`${response.status()} ${response.url().substring(0, 120)}`);
+    }
+  };
+  page.on('response', responseListener);
+
+  // JS 오류 캐치
+  page.on('pageerror', (err) => console.log(`  [JS Error] ${err.message.substring(0, 100)}`));
+
+  // 2차: 발행 확인 버튼 — 클래스 직접 locator 사용 (mouse.click 좌표보다 React 이벤트 확실)
+  let clicked2 = false;
+  const confirmSelector = 'button.confirm_btn__WEaBq';
+
+  // 전략 A: 클래스 직접 locator
+  try {
+    const confirmBtn = page.locator(confirmSelector).first();
+    if (await confirmBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await confirmBtn.click({ timeout: 5000 });
+      clicked2 = true;
+      console.log('  2차 클릭: confirm_btn class locator');
+    }
+  } catch {}
+
+  // 전략 B: evaluateHandle → Playwright ElementHandle.click()
+  if (!clicked2) {
+    try {
+      const handle = await page.evaluateHandle(() => {
+        const btns = [...document.querySelectorAll('button')];
+        const candidates = btns.filter(b => {
+          const txt = (b.textContent || '').trim();
+          const r = b.getBoundingClientRect();
+          return txt === '발행' && !txt.includes('예약') && r.width > 0 && r.top > 100;
+        });
+        if (!candidates.length) return null;
+        candidates.sort((a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top);
+        return candidates[0];
+      });
+      const el = handle.asElement();
+      if (el) {
+        await el.click({ timeout: 5000 });
+        clicked2 = true;
+        console.log('  2차 클릭: evaluateHandle ElementHandle.click()');
+      }
+    } catch {}
+  }
+
+  // 전략 C: dispatchEvent로 React synthetic event 직접 트리거
+  if (!clicked2) {
+    const dispatched = await page.evaluate(() => {
+      const btns = [...document.querySelectorAll('button')];
+      const target = btns.find(b => {
+        const txt = (b.textContent || '').trim();
+        const r = b.getBoundingClientRect();
+        return txt === '발행' && r.width > 0 && r.top > 100;
+      });
+      if (!target) return false;
+      ['mousedown', 'mouseup', 'click'].forEach(type => {
+        target.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+      });
+      return true;
+    });
+    if (dispatched) { clicked2 = true; console.log('  2차 클릭: dispatchEvent 폴백'); }
+  }
+
+  if (!clicked2) throw new Error('2차 발행 확인 버튼을 찾을 수 없습니다');
   console.log('  2차 발행 확인 버튼 클릭 완료');
 
-  // 발행 후 URL 변경 대기 (최대 8초)
+  // 발행 후 URL 변경 대기 (최대 10초) + navigation 동시 감지
   try {
     await page.waitForFunction(
       (url) => location.href !== url,
       writeUrl,
-      { timeout: 8000 }
+      { timeout: 10000 }
     );
     console.log(`  발행 완료 URL: ${page.url()}`);
   } catch {
-    // URL이 안 바뀌면 에러로 처리
-    throw new Error(`발행 후 URL 미변경 — 발행이 완료되지 않았습니다 (현재: ${page.url()})`);
+    // 실패 시 실제로 어떤 API가 호출됐는지 로그 출력
+    console.log('  [NET 발행 이후 요청 목록]:');
+    publishResponses.forEach(r => console.log('   ', r));
+    throw new Error(`발행 후 URL 미변경 (현재: ${page.url()})`);
+  } finally {
+    page.off('response', responseListener);
   }
 
   // 스크린샷 3: 발행 완료
