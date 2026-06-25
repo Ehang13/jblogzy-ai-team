@@ -223,8 +223,8 @@ $statusBadge = [
                   $badge = '<span class="badge bg-success">오늘 완료</span>';
                   $border = 'border-color:#22c55e';
               } elseif ($total > 0) {
-                  $badge = '<span class="badge bg-warning text-dark">진행중</span>';
-                  $border = 'border-color:#eab308';
+                  $badge = '<span class="badge bg-secondary">누적</span>';
+                  $border = 'border-color:#475569';
               } else {
                   $badge = '<span class="badge bg-secondary">미시작</span>';
                   $border = '';
