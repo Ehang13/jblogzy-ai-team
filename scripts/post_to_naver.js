@@ -24,28 +24,17 @@ async function isLoggedIn(context, page) {
 }
 
 // SE3 팝업 처리 (임시저장 확인 팝업 등)
-// .se-popup-alert-confirm 이 클릭을 막는 경우 닫아줌
+// "취소"(첫 번째 버튼) 클릭 → 이전 임시저장 글 버리고 새 글 작성
 async function handleDraftPopup(page) {
   try {
     const popup = page.locator('.se-popup-alert-confirm, .se-popup-alert');
     if (await popup.first().isVisible({ timeout: 3000 }).catch(() => false)) {
-      console.log('  팝업 감지 → 닫는 중...');
-      // SE3 팝업 버튼: 보통 두 번째 버튼이 "아니오"/"취소"
+      console.log('  팝업 감지 → 취소(새 글 작성) 클릭...');
       const popupBtns = popup.first().locator('button');
       const count = await popupBtns.count();
-      if (count >= 2) {
-        await popupBtns.nth(count - 1).click(); // 마지막 버튼 = 아니오/취소
-      } else if (count === 1) {
+      if (count >= 1) {
+        // 첫 번째 버튼 = "취소" (이전 글 버리고 새로 작성)
         await popupBtns.first().click();
-      } else {
-        // 버튼 텍스트로 폴백
-        for (const text of ['아니오', '취소', '나가기', '닫기', '확인']) {
-          const btn = page.locator(`button:has-text("${text}")`).first();
-          if (await btn.isVisible({ timeout: 500 }).catch(() => false)) {
-            await btn.click();
-            break;
-          }
-        }
       }
       await page.waitForTimeout(1000);
     }
@@ -154,79 +143,77 @@ async function inputTags(page, tags) {
   } catch {}
 }
 
+// evaluateHandle로 요소를 찾고 Playwright ElementHandle.click()으로 클릭
+// (JS 네이티브 .click()은 React 이벤트를 트리거하지 않음)
+async function findAndPlaywrightClick(page, findFn) {
+  const handle = await page.evaluateHandle(findFn);
+  const el = handle.asElement();
+  if (!el) return false;
+  await el.click({ timeout: 5000 });
+  return true;
+}
+
 // 발행 버튼 클릭 (2단계: 상단 발행 → 패널 확인 발행)
 async function clickPublish(page) {
-  // 1차: 우측 상단 '발행' 버튼 찾기
-  // 스크린샷 기준: 상단에 "저장 N 발행 ■" 형태로 존재
-  const publishWriteUrl = page.url();
+  const writeUrl = page.url();
 
-  // 전략 1: getByRole
+  // 1차: 우측 상단 '발행' 버튼
+  // evaluateHandle로 찾고 Playwright ElementHandle.click()으로 React 이벤트 트리거
   let clicked1 = false;
+
+  // 전략 1: Playwright locator (regex)
   try {
-    await page.getByRole('button', { name: /발행/ }).first().click({ timeout: 3000 });
+    await page.locator('button').filter({ hasText: /^발행/ }).first().click({ force: true, timeout: 3000 });
     clicked1 = true;
   } catch {}
 
-  // 전략 2: locator with partial text
+  // 전략 2: evaluateHandle + ElementHandle.click() — React 이벤트 정상 트리거
   if (!clicked1) {
-    try {
-      await page.locator('button').filter({ hasText: '발행' }).first().click({ timeout: 3000 });
-      clicked1 = true;
-    } catch {}
-  }
-
-  // 전략 3: JS - 정확히 텍스트에 '발행' 포함 (단, '임시저장' 제외)
-  if (!clicked1) {
-    clicked1 = await page.evaluate(() => {
+    clicked1 = await findAndPlaywrightClick(page, () => {
       const all = [...document.querySelectorAll('button, a[role="button"]')];
-      const el = all.find(e => {
+      return all.find(e => {
         const txt = (e.textContent || '').trim();
-        return txt.includes('발행') && !txt.includes('임시') && !txt.includes('저장');
-      });
-      if (el) { el.click(); return true; }
-      return false;
+        return txt.includes('발행') && !txt.includes('임시');
+      }) || null;
     });
   }
 
   if (!clicked1) throw new Error('1차 발행 버튼을 찾을 수 없습니다');
   console.log('  1차 발행 버튼 클릭 완료');
 
-  // 패널이 열릴 때까지 대기 (발행 설정 패널)
-  await page.waitForTimeout(2500);
+  // 발행 설정 패널이 열릴 때까지 대기
+  await page.waitForTimeout(3000);
 
-  // 2차: 패널 내 '발행' 확인 버튼
-  // 패널에는 카테고리, 공개설정 등이 있고 하단에 '발행' 버튼이 있음
+  // 2차: 패널 내 '발행' 확인 버튼 (화면에서 가장 아래쪽 발행 버튼)
+  // evaluateHandle로 찾고 Playwright ElementHandle.click()으로 클릭
   let clicked2 = false;
+
+  // 전략 1: Playwright locator last
   try {
-    // 패널 하단 발행 버튼: 화면 하단에 위치한 버튼 중 발행 텍스트
-    clicked2 = await page.evaluate(() => {
-      const all = [...document.querySelectorAll('button, a[role="button"]')];
-      // 발행 버튼을 y좌표 기준으로 정렬해서 가장 아래 있는 것 선택
-      const candidates = all.filter(e => {
-        const txt = (e.textContent || '').trim();
-        return txt.includes('발행') && !txt.includes('임시') && !txt.includes('저장');
-      });
-      if (!candidates.length) return false;
-      // 가장 화면 아래쪽 버튼이 확인 발행 버튼
-      candidates.sort((a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top);
-      candidates[0].click();
-      return true;
-    });
+    await page.locator('button').filter({ hasText: /^발행/ }).last().click({ force: true, timeout: 3000 });
+    clicked2 = true;
   } catch {}
 
+  // 전략 2: evaluateHandle + 가장 아래 위치한 발행 버튼
   if (!clicked2) {
-    try {
-      await page.getByRole('button', { name: /발행/ }).last().click({ timeout: 3000 });
-      clicked2 = true;
-    } catch {}
+    clicked2 = await findAndPlaywrightClick(page, () => {
+      const candidates = [...document.querySelectorAll('button, a[role="button"]')]
+        .filter(e => {
+          const txt = (e.textContent || '').trim();
+          return txt.includes('발행') && !txt.includes('임시');
+        });
+      if (!candidates.length) return null;
+      // y좌표가 가장 큰(화면 아래) 버튼 = 패널 확인 버튼
+      candidates.sort((a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top);
+      return candidates[0];
+    });
   }
 
   console.log(`  2차 발행 버튼 클릭: ${clicked2 ? '완료' : '실패(무시)'}`);
   await page.waitForTimeout(4000);
 
-  // URL이 write 페이지에서 벗어났는지 확인 (발행 성공 시 포스트 URL로 이동)
   const finalUrl = page.url();
-  if (finalUrl === publishWriteUrl) {
+  if (finalUrl === writeUrl) {
     console.log('  ⚠️  URL 미변경 - 발행이 완료되지 않았을 수 있습니다');
   }
 }
