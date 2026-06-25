@@ -149,9 +149,9 @@ function formatAudience(string $raw): string {
   </div>
 
   <?php if (empty($items)): ?>
-    <div class="text-center text-muted py-5">
+    <div class="text-center py-5">
       <div style="font-size:3rem">✅</div>
-      <p class="mt-2">해당 상태의 콘텐츠가 없습니다.</p>
+      <p class="mt-2 text-white">해당 상태의 콘텐츠가 없습니다.</p>
     </div>
   <?php endif; ?>
 
