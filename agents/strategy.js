@@ -3,9 +3,11 @@
 // 비용 발생 제안은 승인 큐로 분리, 목표 미수립 시 목표 제안 → 승인 후 활성화
 
 import 'dotenv/config';
-import { ask } from '../core/claude.js';
-import { send, notifyError } from '../core/reporter.js';
-import { sendMail } from '../core/mailer.js';
+import { execSync }                   from 'child_process';
+import { writeFileSync }              from 'fs';
+import { ask, askJson }               from '../core/claude.js';
+import { send, notifyError }          from '../core/reporter.js';
+import { sendMail }                   from '../core/mailer.js';
 import { ALL_INDUSTRIES, ALL_REGIONS } from './sales.js';
 
 const DEPARTMENT      = 'strategy';
@@ -149,6 +151,148 @@ function mdToHtml(text) {
     .replace(/\n/g, '<br>');
 }
 
+// ── 자율 코드 개발 (GitHub Actions 전용) ────────────────────────────────
+async function developFeature(weeklyReport) {
+  if (!process.env.GITHUB_ACTIONS) {
+    console.log('  → 자율 개발: GitHub Actions 환경에서만 실행');
+    return null;
+  }
+
+  console.log('  → 자율 개발: 구현 기능 선택 중...');
+
+  // Step 1: Claude가 구현할 기능 1개 결정
+  const plan = await askJson(`
+## 이번 주 전략 감사 결과
+${weeklyReport}
+
+## 이미 구현된 기능
+- 유료 회원 이탈 위험도 분석 + 리텐션 이메일 (agents/chm.js)
+- 3일 무료 체험 전환 이메일 D+1 온보딩, D+2 전환 유도 (agents/chm.js)
+- 네이버 플레이스 리드 발굴 + 이메일 초안 자동 생성 (agents/sales.js)
+- 마케팅 블로그 자동 포스팅 + SNS 캡션 (agents/marketing.js)
+- 주간 전략 감사 리포트 + 비용 제안 승인 큐 (agents/strategy.js)
+
+## 구현 가능한 갭 예시 (이 외에도 자유롭게 제안)
+- 체험 만료 후 재가입 유도 이메일 (만료 3일 후 한 번)
+- 영업팀 업종별 리드 품질 분석 리포트 (주간)
+- CHM 회원 위험도 재계산 + settings 업데이트
+- 마케팅 섹터별 포스팅 빈도 균형 모니터링
+
+## 제약
+- Node.js ESM, 기존 테이블만 (content_queue, leads, settings, agent_tasks)
+- 새 외부 API 없이 구현 가능한 것
+- 단일 파일로 완성
+
+구현할 기능 1가지를 골라 JSON으로 답해:
+{
+  "title": "기능명 (40자 이내)",
+  "description": "기능 상세 설명과 동작 방식",
+  "target_file": "파일 경로 (예: agents/trial-reengagement.js)",
+  "rationale": "이 기능을 선택한 이유와 기대 효과"
+}
+`);
+
+  if (!plan?.title || !plan?.target_file) {
+    console.log('  → 자율 개발: 적합한 구현 대상 없음');
+    return null;
+  }
+
+  console.log(`  → 자율 개발: "${plan.title}" 구현 시작`);
+
+  // Step 2: 코드 생성
+  const codeRaw = await ask(`다음 기능을 Node.js ESM으로 구현하세요.
+
+## 기능 명세
+제목: ${plan.title}
+설명: ${plan.description}
+파일: ${plan.target_file}
+
+## 필수 코드 패턴
+
+\`\`\`js
+import 'dotenv/config';
+import { ask, askJson, askFast } from '../core/claude.js';
+// ask(prompt, maxTokens?) → string (Sonnet, 고품질)
+// askFast(prompt, maxTokens?) → string (Haiku, 빠름·저비용)
+// askJson(prompt, fast?) → JSON object
+
+import { send, notifyError } from '../core/reporter.js';
+// send({ department, task_type, status: 'completed'|'error', summary, detail, ... })
+
+// jblogzy 회원 조회
+const { members } = await (await fetch(process.env.JBLOGZY_API_URL,
+  { headers: { 'X-Api-Key': process.env.JBLOGZY_API_KEY } })).json();
+
+// 카페24 API
+const BASE = process.env.CAFE24_API_URL.replace('/report.php', '');
+const KEY  = process.env.CAFE24_API_KEY;
+
+const DEPARTMENT = 'chm'; // sales / marketing / chm / strategy
+
+export async function run() { ... }
+if (process.argv[1].endsWith('파일명.js')) run().catch(console.error);
+\`\`\`
+
+## 규칙
+- "보장", "확정", "100%" 단언적 표현 금지
+- 이메일 발송 시 수신거부 안내 문구 포함
+- 에러 발생 시 notifyError() 호출, 프로세스 중단 없이 해당 항목 건너뜀
+
+전체 파일 코드만 출력 (설명 없이):
+\`\`\`js
+[코드]
+\`\`\``, 4000);
+
+  const codeMatch = codeRaw.match(/```(?:js|javascript)?\n([\s\S]+?)\n```/);
+  if (!codeMatch) {
+    console.log('  → 자율 개발: 코드 블록 파싱 실패');
+    return null;
+  }
+  const code = codeMatch[1].trim();
+
+  // Step 3: 브랜치 생성 → 파일 작성 → 커밋 → PR
+  try {
+    execSync('git config user.name "전략기획팀 AI"',   { stdio: 'pipe' });
+    execSync('git config user.email "ai@jblogzy.com"', { stdio: 'pipe' });
+
+    const slug   = Date.now().toString(36);
+    const branch = `strategy/auto-${new Date().toISOString().slice(0, 10)}-${slug}`;
+
+    execSync(`git checkout -b ${branch}`, { stdio: 'pipe' });
+    writeFileSync(plan.target_file, code, 'utf8');
+    execSync(`git add "${plan.target_file}"`, { stdio: 'pipe' });
+    execSync(`git commit -m "feat: ${plan.title} (전략기획팀 자율 구현)"`, { stdio: 'pipe' });
+    execSync(`git push origin ${branch}`, { stdio: 'pipe' });
+
+    const prBody = [
+      '## 전략기획팀 자율 개발 PR',
+      '',
+      `**기능**: ${plan.title}`,
+      '',
+      `**선택 이유**: ${plan.rationale}`,
+      '',
+      `**기능 설명**: ${plan.description}`,
+      '',
+      '---',
+      '> 이 PR은 전략기획팀 AI가 자율적으로 생성했습니다. **반드시 코드 리뷰 후 머지**해주세요.',
+    ].join('\n');
+
+    writeFileSync('/tmp/strategy-pr-body.md', prBody, 'utf8');
+
+    const prUrl = execSync(
+      `gh pr create --title "[전략기획팀] ${plan.title}" --body-file /tmp/strategy-pr-body.md --base main`,
+      { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] },
+    ).trim();
+
+    console.log(`  → PR 생성: ${prUrl}`);
+    return { title: plan.title, rationale: plan.rationale, prUrl };
+
+  } catch (err) {
+    console.error('  → 자율 개발 Git/PR 오류:', err.message);
+    return null;
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 export async function run() {
   console.log('\n🔍 [전략기획팀] 주간 전략 분석 시작');
@@ -257,6 +401,9 @@ ${JSON.stringify(AI_TEAM, null, 2)}
   const costProposals = extractCostProposals(report);
   for (const p of costProposals) await submitProposal(p);
 
+  // 자율 코드 개발 → GitHub PR
+  const devResult = await developFeature(report);
+
   // 최초 실행 시: 목표를 '제안' 상태로 설정값 저장 (관리자 확인 후 직접 활성화)
   if (isFirstRun) {
     const goalMatch = report.match(/(\d+)명.*?(\d+)일|(\d+)명.*?(3개월|90일)/);
@@ -275,24 +422,27 @@ ${JSON.stringify(AI_TEAM, null, 2)}
 
   const taskType = isFirstRun ? '최초 전략 계획 수립' : '주간 전략 진척도 검토';
 
+  const devNote  = devResult ? ` / 자율 개발 PR 1건` : '';
   await send({
     department: DEPARTMENT,
     task_type:  taskType,
     status:     'completed',
-    summary:    `${taskType} 완료 — 유료 ${members.paid}명 / 체험 ${members.trial}명${costProposals.length > 0 ? ` / 비용 제안 ${costProposals.length}건` : ''}`,
-    detail:     report,
+    summary:    `${taskType} 완료 — 유료 ${members.paid}명 / 체험 ${members.trial}명${costProposals.length > 0 ? ` / 비용 제안 ${costProposals.length}건` : ''}${devNote}`,
+    detail:     report + (devResult ? `\n\n---\n🛠 자율 개발 PR: ${devResult.prUrl}` : ''),
   });
 
   if (ADMIN_EMAIL) {
-    const isFirst = isFirstRun;
     const costNote = costProposals.length > 0
       ? `<p style="background:#1e3a5f;padding:10px;border-radius:6px;margin-bottom:1em">⚠️ 승인 대기 제안 ${costProposals.length}건이 대시보드에 등록됐습니다.</p>`
       : '';
+    const prNote = devResult
+      ? `<p style="background:#1a2e1a;padding:10px;border-radius:6px;margin-bottom:1em">🛠 <strong>자율 개발 PR 생성됨</strong>: <a href="${devResult.prUrl}" style="color:#4ade80">${devResult.title}</a><br><small>${devResult.rationale}</small></p>`
+      : '';
     await sendMail({
       to:      ADMIN_EMAIL,
-      subject: `[jblogzy 전략기획팀] ${isFirst ? '최초 전략 계획서' : '주간 진척도 리포트'}`,
-      html:    costNote + mdToHtml(report),
-      text:    report,
+      subject: `[jblogzy 전략기획팀] ${isFirstRun ? '최초 전략 계획서' : '주간 진척도 리포트'}${devResult ? ' + 자율 개발 PR' : ''}`,
+      html:    costNote + prNote + mdToHtml(report),
+      text:    report + (devResult ? `\n\n자율 개발 PR: ${devResult.prUrl}` : ''),
     }).catch(e => console.error('  → 이메일 발송 실패:', e.message));
   }
 
