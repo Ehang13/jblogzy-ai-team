@@ -245,6 +245,38 @@ async function clickPublish(page, screenshotDir) {
     await page.screenshot({ path: `${screenshotDir}/2_after_first_click.png`, fullPage: false });
   }
 
+  // 도움말 패널 닫기 — 발행 설정 패널의 확인 버튼 위를 가려서 클릭 불가 상태 해소
+  // 방법 1: JS로 인터셉트 요소 숨김 (가장 확실)
+  await page.evaluate(() => {
+    // SE3 도움말/네비게이션 패널 컨테이너 숨김
+    const selectors = [
+      '.container__HW_tc',           // 이전 실행에서 intercepts pointer events 로 잡힌 컨테이너
+      '[class*="se-help"]',
+      '[class*="help_panel"]',
+      '[class*="helpPanel"]',
+      '.se-help-panel',
+    ];
+    for (const sel of selectors) {
+      document.querySelectorAll(sel).forEach(el => {
+        el.style.display = 'none';
+      });
+    }
+  });
+  // 방법 2: X 버튼 직접 클릭 (클래스 탐색)
+  try {
+    const helpX = page.locator([
+      'button[class*="help_close"]',
+      'button[class*="helpClose"]',
+      '[class*="help"] button[aria-label*="닫기"]',
+      '[class*="help"] button[title*="닫기"]',
+    ].join(', ')).first();
+    if (await helpX.isVisible({ timeout: 800 }).catch(() => false)) {
+      await helpX.click({ force: true });
+    }
+  } catch {}
+  console.log('  도움말 패널 숨김 처리');
+  await page.waitForTimeout(400);
+
   // 카테고리 선택 — 미선택 시 발행 버튼 클릭해도 네이버가 무시함
   try {
     const catResult = await page.evaluate(() => {
