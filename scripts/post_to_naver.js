@@ -176,21 +176,20 @@ async function clickPublish(page, screenshotDir) {
     console.log('  📸 스크린샷 저장: 1_before_publish.png');
   }
 
-  // 1차: 우측 상단 '발행' 버튼
+  // 1차: 우측 상단 '발행' 버튼 (정확히 "발행" 텍스트만 — "예약 발행 0건" 제외)
   let clicked1 = false;
   try {
-    await page.locator('button').filter({ hasText: /^발행/ }).first().click({ force: true, timeout: 3000 });
+    // /^발행$/ = 텍스트가 정확히 "발행"인 버튼만 매치
+    await page.locator('button').filter({ hasText: /^발행$/ }).click({ force: true, timeout: 5000 });
     clicked1 = true;
   } catch {}
 
   if (!clicked1) {
-    clicked1 = await findAndPlaywrightClick(page, () => {
-      const all = [...document.querySelectorAll('button, a[role="button"]')];
-      return all.find(e => {
-        const txt = (e.textContent || '').trim();
-        return txt.includes('발행') && !txt.includes('임시');
-      }) || null;
-    });
+    // fallback: getByRole exact match
+    try {
+      await page.getByRole('button', { name: '발행', exact: true }).click({ force: true, timeout: 3000 });
+      clicked1 = true;
+    } catch {}
   }
 
   if (!clicked1) throw new Error('1차 발행 버튼을 찾을 수 없습니다');
@@ -204,21 +203,46 @@ async function clickPublish(page, screenshotDir) {
     console.log('  📸 스크린샷 저장: 2_after_first_click.png');
   }
 
-  // 2차: 패널 내 '발행' 확인 버튼 (✓ 발행 — 시작 문자가 발행이 아닐 수 있음)
+  // 2차: 패널 내 '발행' 확인 버튼
+  // 1차 클릭 후 패널이 열리면 "발행" 버튼이 2개가 됨 (툴바 + 패널)
+  // 패널 버튼은 y좌표가 훨씬 아래에 있음
   let clicked2 = false;
+
+  // 전략 1: 패널에 새 발행 버튼이 나타날 때까지 대기
   try {
-    // 패널의 확인 발행 버튼: 텍스트에 '발행' 포함, y 좌표 가장 아래
+    // y좌표가 200px 이상인 "발행" 버튼 = 패널 버튼
     clicked2 = await findAndPlaywrightClick(page, () => {
       const candidates = [...document.querySelectorAll('button')]
         .filter(e => {
           const txt = (e.textContent || '').trim();
-          return txt.includes('발행') && !txt.includes('임시');
+          const y = e.getBoundingClientRect().top;
+          return txt.includes('발행') && !txt.includes('예약') && !txt.includes('임시') && y > 200;
         });
       if (!candidates.length) return null;
       candidates.sort((a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top);
       return candidates[0];
     });
   } catch {}
+
+  // 전략 2: 패널 컨테이너 내부의 버튼 찾기
+  if (!clicked2) {
+    try {
+      const panelSelectors = [
+        '[class*="publishLayer"] button',
+        '[class*="publish_layer"] button',
+        '[class*="PublishPanel"] button',
+        '[class*="publish-panel"] button',
+      ];
+      for (const sel of panelSelectors) {
+        const btn = page.locator(sel).filter({ hasText: /발행/ }).last();
+        if (await btn.isVisible({ timeout: 1000 }).catch(() => false)) {
+          await btn.click({ force: true });
+          clicked2 = true;
+          break;
+        }
+      }
+    } catch {}
+  }
 
   console.log(`  2차 발행 버튼 클릭: ${clicked2 ? '완료' : '실패(무시)'}`);
   await page.waitForTimeout(4000);
