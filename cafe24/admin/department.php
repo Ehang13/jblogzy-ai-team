@@ -99,13 +99,17 @@ if ($dept === 'sales') {
     $stmt->execute();
     $extra = $stmt->fetchAll();
 } elseif ($dept === 'strategy') {
-    $stmt = $pdo->query("
-        SELECT id, title, body, detail, approval_status, created_at
-        FROM content_queue
-        WHERE department='strategy' AND content_type='proposal'
-        ORDER BY created_at DESC LIMIT 30
-    ");
-    $extra = $stmt->fetchAll();
+    try {
+        $stmt = $pdo->query("
+            SELECT id, title, body, approval_status, created_at
+            FROM content_queue
+            WHERE department='strategy' AND content_type='proposal'
+            ORDER BY created_at DESC LIMIT 30
+        ");
+        $extra = $stmt->fetchAll();
+    } catch (PDOException $e) {
+        $extra = [];
+    }
 }
 
 function timeAgo(string $dt): string {
@@ -339,8 +343,8 @@ $statusBadge = [
               <span class="badge bg-warning text-dark"><?= count($pendingProposals) ?>건</span>
             </div>
             <?php foreach ($pendingProposals as $p):
-              $detail = json_decode($p['detail'] ?? '{}', true);
-              $cost   = $detail['estimated_cost'] ?? '';
+              preg_match('/\[예상 비용:\s*([^\]]+)\]/', $p['body'] ?? '', $cm);
+              $cost = $cm[1] ?? '';
             ?>
               <div class="p-3 mb-3 rounded" id="proposal-<?= $p['id'] ?>" style="background:#1e293b;border:1px solid #f59e0b">
                 <div class="d-flex justify-content-between align-items-start mb-2">
