@@ -31,15 +31,96 @@ const CAFE24_API_BASE = process.env.CAFE24_API_URL.replace('/report.php', '');
 const CAFE24_API_KEY  = process.env.CAFE24_API_KEY;
 
 /**
- * 회원 데이터 조회 - jblogzy API
+ * 회원 데이터 전체 조회 - jblogzy API (유료 + 체험 분리)
  */
-async function fetchMemberData() {
+async function fetchAllMembers() {
   const res = await fetch(process.env.JBLOGZY_API_URL, {
     headers: { 'X-Api-Key': process.env.JBLOGZY_API_KEY },
   });
   if (!res.ok) throw new Error(`jblogzy API 오류: ${res.status}`);
   const { members } = await res.json();
-  return members.slice(0, 30);
+  return members;
+}
+
+/**
+ * 체험 회원 전환 이메일 생성 (온보딩 D+1 / 전환유도 D+2)
+ */
+async function generateTrialEmail(member, emailType) {
+  const prompts = {
+    onboarding: `당신은 jblogzy.com 고객관리팀 담당자입니다.
+아래 회원이 어제 가입하여 3일 무료 체험 첫날입니다.
+따뜻하고 환영하는 톤으로 첫 블로그 글 작성을 도와주세요.
+
+[회원 정보]
+- 이름: ${member.name}
+
+[이메일 방향]
+- 따뜻한 환영 인사
+- jblogzy 핵심 사용법 1-2줄 (네이버 블로그 연동 → AI 원고 생성 → 예약 발행)
+- 오늘 바로 해볼 수 있는 행동 1가지 제안
+- 3일 체험 기간임을 자연스럽게 언급
+
+[필수 규칙]
+- "보장", "확정", "100%" 같은 단언적 표현 금지
+- 자영업자의 실질적 시간 절약을 신뢰감 있는 톤으로 강조
+- 전체 250자 이내
+- 수신거부 문구 포함
+
+형식:
+제목: [제목]
+---
+[본문]`,
+
+    conversion: `당신은 jblogzy.com 고객관리팀 담당자입니다.
+아래 회원의 3일 무료 체험이 내일 종료됩니다.
+구체적인 사용 사례를 중심으로 유료 전환을 자연스럽게 유도해주세요.
+
+[회원 정보]
+- 이름: ${member.name}
+
+[요금제 안내 — 아래 수치만 사용, 임의 변경 금지]
+- Basic: 월 39,000원 (AI 원고 월 90회, 예약 포스팅)
+- Premium: 월 69,000원 (AI 원고 월 300회, 방문자 유입 품앗이) ← 가장 인기
+- Business: 월 79,000원 (AI 원고 월 600회, 다계정 관리)
+- 전환 링크: https://jblogzy.com
+
+[이메일 방향]
+- 체험 종료 D-1 알림 (부담 없는 친근한 톤)
+- 직접 블로그 운영 시 소요 시간 vs jblogzy 활용 시 절약 시간 비교 (구체적 예시)
+- Premium 요금제를 자연스럽게 추천 (이유 포함)
+
+[필수 규칙]
+- "보장", "확정", "100%" 금지
+- 요금제 수치는 위 내용만 사용
+- 전체 300자 이내
+- 수신거부 문구 포함
+
+형식:
+제목: [제목]
+---
+[본문]`,
+  };
+
+  const raw = await ask(prompts[emailType], 900);
+  const lines = raw.split('\n');
+  let subject = '';
+  const bodyLines = [];
+  let started = false;
+
+  for (const line of lines) {
+    if (!started && line.startsWith('제목:')) {
+      subject = line.replace('제목:', '').trim();
+    } else if (line.includes('---')) {
+      started = true;
+    } else if (started) {
+      bodyLines.push(line);
+    }
+  }
+
+  return {
+    subject: subject || `${member.name}님, jblogzy 체험 안내드립니다`,
+    body:    bodyLines.join('\n').trim(),
+  };
 }
 
 /**
@@ -218,20 +299,24 @@ export async function run() {
     console.log(`  → 재생성 요청: ${regenItems.length}건`);
   }
 
-  let members;
+  let allMembers;
   try {
-    members = await fetchMemberData();
+    allMembers = await fetchAllMembers();
   } catch (err) {
     await notifyError(DEPARTMENT, '회원 데이터 조회', err);
     return;
   }
 
+  // 유료 회원 / 체험 회원 분리
+  const paidMembers  = allMembers.filter(m => m.sub_status === 'active').slice(0, 30);
+  const trialMembers = allMembers.filter(m => m.sub_status === 'trialing');
+
   // 최근 30일 내 발송된 회원 제외
   const recentlyContacted = await fetchRecentlyContactedIds();
 
   // 재생성 대상 우선 배치, 그 외 중복 제거
-  const regenMembers   = members.filter(m => regenMemberIds.has(String(m.id)));
-  const regularMembers = members.filter(m =>
+  const regenMembers   = paidMembers.filter(m => regenMemberIds.has(String(m.id)));
+  const regularMembers = paidMembers.filter(m =>
     !regenMemberIds.has(String(m.id)) && !recentlyContacted.has(String(m.id))
   );
   const orderedMembers = [...regenMembers, ...regularMembers];
@@ -323,14 +408,70 @@ export async function run() {
     }
   }
 
+  // ── 체험 회원 전환 이메일 ─────────────────────────────────────────────
+  const trialResults = { onboarding: 0, conversion: 0, skipped: 0, errors: 0 };
+  if (trialMembers.length > 0) {
+    console.log(`\n  📩 체험 회원: ${trialMembers.length}명`);
+    for (const member of trialMembers) {
+      try {
+        const daysSinceJoin = Math.floor((Date.now() - new Date(member.created_at)) / 86400000);
+        const emailType = daysSinceJoin === 1 ? 'onboarding'
+                        : daysSinceJoin === 2 ? 'conversion'
+                        : null;
+
+        if (!emailType) {
+          trialResults.skipped++;
+          continue;
+        }
+
+        const { subject, body } = await generateTrialEmail(member, emailType);
+        const label = emailType === 'onboarding' ? '온보딩' : '전환 유도';
+        console.log(`  📧 ${member.name} - 체험 D+${daysSinceJoin} ${label}`);
+
+        const trialReportRes = await send({
+          department:      DEPARTMENT,
+          task_type:       '체험 회원 전환 이메일',
+          status:          'completed',
+          summary:         `[체험 D+${daysSinceJoin}] ${member.name}님 ${label} 이메일 생성`,
+          detail:          JSON.stringify({ memberId: member.id, daysSinceJoin, emailType }),
+          content_type:    'trial_email',
+          content_title:   `[체험 D+${daysSinceJoin}] ${member.name}님 - ${label}`,
+          content_body:    `받는 사람: ${member.email}\n제목: ${subject}\n\n${body}`,
+          target_platform: 'email',
+          target_audience: `member_id:${member.id}|체험 D+${daysSinceJoin} / ${label}`,
+          chm_member_id:   String(member.id),
+        });
+
+        if (autoApprove && trialReportRes?.content_queue_id) {
+          await fetch(`${CAFE24_API_BASE}/auto_approve_chm.php`, {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Api-Key': CAFE24_API_KEY },
+            body:    JSON.stringify({ content_queue_id: trialReportRes.content_queue_id }),
+          }).catch(() => {});
+        }
+
+        trialResults[emailType === 'onboarding' ? 'onboarding' : 'conversion']++;
+        await new Promise(r => setTimeout(r, 500));
+
+      } catch (err) {
+        console.error(`  ❌ [${member.name}] 체험 이메일 오류:`, err.message);
+        trialResults.errors++;
+      }
+    }
+  }
+
+  const trialSummary = trialMembers.length > 0
+    ? ` | 체험 ${trialMembers.length}명 (온보딩 ${trialResults.onboarding}건, 전환 ${trialResults.conversion}건)`
+    : '';
+
   await send({
     department: DEPARTMENT,
     task_type:  '일일 고객 분석 완료',
     status:     'completed',
-    summary:    `오늘 ${orderedMembers.length}명 분석 완료 - 🔴 위험 ${results.HIGH}명, 🟡 중간 ${results.MEDIUM}명, 🟢 양호 ${results.LOW}명`,
+    summary:    `오늘 ${orderedMembers.length}명 분석 완료 - 🔴 위험 ${results.HIGH}명, 🟡 중간 ${results.MEDIUM}명, 🟢 양호 ${results.LOW}명${trialSummary}`,
   });
 
-  console.log(`🤝 [고객관리팀] 완료 - 위험 ${results.HIGH}명, 중간 ${results.MEDIUM}명, 양호 ${results.LOW}명\n`);
+  console.log(`🤝 [고객관리팀] 완료 - 위험 ${results.HIGH}명, 중간 ${results.MEDIUM}명, 양호 ${results.LOW}명${trialSummary}\n`);
 }
 
 // 직접 실행 시 (npm run chm)
