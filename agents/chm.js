@@ -61,6 +61,22 @@ async function isChmAutoApproveEnabled() {
 /**
  * 재생성 요청된 회원 ID 목록 조회 (cafe24 대시보드)
  */
+/**
+ * 최근 30일 내 이메일 발송된 회원 ID 집합 조회 (중복 방지)
+ */
+async function fetchRecentlyContactedIds() {
+  try {
+    const res = await fetch(
+      `${CAFE24_API_BASE}/fetch_recently_contacted.php`,
+      { headers: { 'X-Api-Key': CAFE24_API_KEY } },
+    );
+    const { member_ids } = await res.json();
+    return new Set((member_ids ?? []).map(String));
+  } catch {
+    return new Set();
+  }
+}
+
 async function fetchRegenMemberIds() {
   try {
     const res = await fetch(`${CAFE24_API_BASE}/fetch_regen_requests.php`, {
@@ -210,22 +226,43 @@ export async function run() {
     return;
   }
 
+  // 최근 30일 내 발송된 회원 제외
+  const recentlyContacted = await fetchRecentlyContactedIds();
+
   // 재생성 대상 우선 배치, 그 외 중복 제거
-  const regenMembers = members.filter(m => regenMemberIds.has(String(m.id)));
-  const regularMembers = members.filter(m => !regenMemberIds.has(String(m.id)));
+  const regenMembers   = members.filter(m => regenMemberIds.has(String(m.id)));
+  const regularMembers = members.filter(m =>
+    !regenMemberIds.has(String(m.id)) && !recentlyContacted.has(String(m.id))
+  );
   const orderedMembers = [...regenMembers, ...regularMembers];
 
-  console.log(`  → 분석 대상 회원: ${orderedMembers.length}명 (재생성 ${regenMembers.length}명 포함)`);
+  console.log(`  → 분석 대상 회원: ${orderedMembers.length}명 (재생성 ${regenMembers.length}명 포함, 최근 연락 ${recentlyContacted.size}명 제외)`);
 
   const results = { HIGH: 0, MEDIUM: 0, LOW: 0, errors: 0 };
 
   for (const member of orderedMembers) {
     try {
       const riskData  = await scoreChurnRisk(member);
-      const emailData = await generateRetentionEmail(member, riskData);
-      const { subject, body, riskLevel, benefit } = emailData;
+      const riskLevel = riskData.score >= 70 ? 'HIGH' : riskData.score >= 40 ? 'MEDIUM' : 'LOW';
+      const badge     = RISK_LEVELS[riskLevel].badge;
 
-      const badge = RISK_LEVELS[riskLevel].badge;
+      // 발송 기준 필터링 (재생성 요청은 예외)
+      const isRegen = regenItems.some(r => String(r.member_id) === String(member.id));
+      if (!isRegen) {
+        if (riskLevel === 'LOW') {
+          console.log(`  ⏭ ${member.name} - LOW 위험도(${riskData.score}점), 발송 제외`);
+          results.LOW++;
+          continue;
+        }
+        if (riskLevel === 'MEDIUM' && (riskData.daysToExpiry === null || riskData.daysToExpiry > 7)) {
+          console.log(`  ⏭ ${member.name} - MEDIUM이지만 만료 ${riskData.daysToExpiry ?? '?'}일 남음 (7일 초과), 발송 제외`);
+          continue;
+        }
+      }
+
+      const emailData = await generateRetentionEmail(member, riskData);
+      const { subject, body, benefit } = emailData;
+
       console.log(`  ${badge} ${member.name} - 이탈 위험도 ${riskData.score}점 (${RISK_LEVELS[riskLevel].label})`);
 
       // 재생성 요청이었다면 원본 항목에 regenerated 표시
