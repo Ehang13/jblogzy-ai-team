@@ -120,7 +120,6 @@ function formatAudience(string $raw): string {
   <div class="mb-2">
     <?php foreach ([
         'all'       => '전체 부서',
-        'sales'     => '📊 영업팀',
         'marketing' => '✍️ 마케팅팀',
         'chm'       => '🤝 고객관리팀',
     ] as $d => $label): ?>
