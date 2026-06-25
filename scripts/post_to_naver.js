@@ -107,15 +107,20 @@ async function inputTitle(ctx, title) {
   return true;
 }
 
-// 본문 입력 (SE3 정확한 셀렉터 + 단락 단위 입력)
+// 본문 입력 — 제목 영역(.se-documentTitle)을 제외한 첫 번째 .se-text-paragraph 사용
 async function inputContent(ctx, content) {
-  const sel = [
-    '.se-component-content .se-text-paragraph',
-    '.se-main-container .se-text-paragraph',
-  ].join(', ');
+  // Python blog_uploader.py와 동일: title_el.contains(p) 체크로 제목 제외
+  const bodyEl = await ctx.evaluateHandle(() => {
+    const titleEl = document.querySelector('.se-documentTitle');
+    const all = [...document.querySelectorAll('.se-text-paragraph')];
+    return all.find(p => !(titleEl && titleEl.contains(p))) || null;
+  });
 
-  const el = await ctx.waitForSelector(sel, { timeout: 8000 });
-  await el.click();
+  if (!bodyEl || !(await bodyEl.asElement())) {
+    throw new Error('본문 입력 영역을 찾을 수 없습니다');
+  }
+
+  await bodyEl.click();
   await ctx.waitForTimeout(300);
 
   const paragraphs = content.split('\n\n');
@@ -149,66 +154,81 @@ async function inputTags(page, tags) {
   } catch {}
 }
 
-// JS로 "발행" 텍스트를 가진 요소를 DOM 전체에서 탐색해 클릭
-async function jsClickByText(page, text) {
-  return page.evaluate((t) => {
-    const all = [...document.querySelectorAll('button, a, span, div')];
-    // 정확히 일치하는 것 우선
-    let el = all.find(e => (e.textContent || '').trim() === t);
-    // 없으면 포함 검색
-    if (!el) el = all.find(e => (e.textContent || '').trim().includes(t));
-    if (!el) return false;
-    el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-    return true;
-  }, text);
-}
-
-// 발행 버튼 클릭 (default content, 2단계)
+// 발행 버튼 클릭 (2단계: 상단 발행 → 패널 확인 발행)
 async function clickPublish(page) {
-  // 1차: 우측 상단 '발행' 버튼 — 여러 전략 순차 시도
-  let clicked1 = false;
+  // 1차: 우측 상단 '발행' 버튼 찾기
+  // 스크린샷 기준: 상단에 "저장 N 발행 ■" 형태로 존재
+  const publishWriteUrl = page.url();
 
   // 전략 1: getByRole
+  let clicked1 = false;
   try {
-    await page.getByRole('button', { name: '발행' }).first().click({ timeout: 3000 });
+    await page.getByRole('button', { name: /발행/ }).first().click({ timeout: 3000 });
     clicked1 = true;
   } catch {}
 
-  // 전략 2: locator filter
+  // 전략 2: locator with partial text
   if (!clicked1) {
     try {
-      await page.locator('button, a').filter({ hasText: /^발행$/ }).first().click({ timeout: 3000 });
+      await page.locator('button').filter({ hasText: '발행' }).first().click({ timeout: 3000 });
       clicked1 = true;
     } catch {}
   }
 
-  // 전략 3: JS DOM 전체 탐색
+  // 전략 3: JS - 정확히 텍스트에 '발행' 포함 (단, '임시저장' 제외)
   if (!clicked1) {
-    clicked1 = await jsClickByText(page, '발행');
+    clicked1 = await page.evaluate(() => {
+      const all = [...document.querySelectorAll('button, a[role="button"]')];
+      const el = all.find(e => {
+        const txt = (e.textContent || '').trim();
+        return txt.includes('발행') && !txt.includes('임시') && !txt.includes('저장');
+      });
+      if (el) { el.click(); return true; }
+      return false;
+    });
   }
 
   if (!clicked1) throw new Error('1차 발행 버튼을 찾을 수 없습니다');
+  console.log('  1차 발행 버튼 클릭 완료');
 
-  // 발행 설정 패널 열릴 때까지 대기
+  // 패널이 열릴 때까지 대기 (발행 설정 패널)
   await page.waitForTimeout(2500);
 
-  // 2차: 패널 내 확인 발행 버튼
+  // 2차: 패널 내 '발행' 확인 버튼
+  // 패널에는 카테고리, 공개설정 등이 있고 하단에 '발행' 버튼이 있음
   let clicked2 = false;
-
   try {
-    const btns = page.locator('button, a').filter({ hasText: /^발행$/ });
-    const count = await btns.count();
-    if (count > 0) {
-      await btns.nth(count - 1).click({ timeout: 3000 });
-      clicked2 = true;
-    }
+    // 패널 하단 발행 버튼: 화면 하단에 위치한 버튼 중 발행 텍스트
+    clicked2 = await page.evaluate(() => {
+      const all = [...document.querySelectorAll('button, a[role="button"]')];
+      // 발행 버튼을 y좌표 기준으로 정렬해서 가장 아래 있는 것 선택
+      const candidates = all.filter(e => {
+        const txt = (e.textContent || '').trim();
+        return txt.includes('발행') && !txt.includes('임시') && !txt.includes('저장');
+      });
+      if (!candidates.length) return false;
+      // 가장 화면 아래쪽 버튼이 확인 발행 버튼
+      candidates.sort((a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top);
+      candidates[0].click();
+      return true;
+    });
   } catch {}
 
   if (!clicked2) {
-    clicked2 = await jsClickByText(page, '발행');
+    try {
+      await page.getByRole('button', { name: /발행/ }).last().click({ timeout: 3000 });
+      clicked2 = true;
+    } catch {}
   }
 
-  await page.waitForTimeout(3000);
+  console.log(`  2차 발행 버튼 클릭: ${clicked2 ? '완료' : '실패(무시)'}`);
+  await page.waitForTimeout(4000);
+
+  // URL이 write 페이지에서 벗어났는지 확인 (발행 성공 시 포스트 URL로 이동)
+  const finalUrl = page.url();
+  if (finalUrl === publishWriteUrl) {
+    console.log('  ⚠️  URL 미변경 - 발행이 완료되지 않았을 수 있습니다');
+  }
 }
 
 // ─────────────────────────────────────────────
