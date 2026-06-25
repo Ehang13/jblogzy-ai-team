@@ -286,6 +286,17 @@ async function clickPublish(page, screenshotDir) {
     await page.screenshot({ path: `${screenshotDir}/2b_before_confirm.png`, fullPage: false });
   }
 
+  // RabbitWrite.naver 발행 API 요청/응답 인터셉트 (에러 본문 확인)
+  const rabbitLog = { reqBody: null, resBody: null, status: null };
+  await page.route('**/RabbitWrite.naver', async (route) => {
+    const req = route.request();
+    rabbitLog.reqBody = req.postData()?.substring(0, 500) || null;
+    const res = await route.fetch();
+    rabbitLog.status = res.status();
+    rabbitLog.resBody = (await res.text()).substring(0, 500);
+    await route.fulfill({ response: res });
+  });
+
   // 발행 API 네트워크 전체 모니터링 (page + 모든 하위 frame 포함)
   const publishLogs = [];
   const context = page.context();
@@ -393,8 +404,12 @@ async function clickPublish(page, screenshotDir) {
     // 실패 시 캡처한 모든 네트워크 요청 출력
     console.log(`  [NET 발행 이후 전체 요청 ${publishLogs.length}건]:`);
     publishLogs.slice(-20).forEach(r => console.log('   ', r));
+    if (rabbitLog.status !== null) {
+      console.log(`  [RabbitWrite 요청 본문]: ${rabbitLog.reqBody}`);
+      console.log(`  [RabbitWrite 응답 ${rabbitLog.status}]: ${rabbitLog.resBody}`);
+    }
     if (errorDialogClicked) {
-      throw new Error('발행 실패: 네이버 서버 오류 발생 (페이지를 찾을 수 없습니다) — IP 차단 또는 CSRF 토큰 문제일 수 있습니다');
+      throw new Error(`발행 실패: RabbitWrite 오류 — ${rabbitLog.resBody?.substring(0, 100) || '페이지를 찾을 수 없습니다'}`);
     }
     throw new Error(`발행 후 URL 미변경 (현재: ${page.url()})`);
   } finally {
