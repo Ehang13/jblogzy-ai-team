@@ -245,6 +245,42 @@ async function clickPublish(page, screenshotDir) {
     await page.screenshot({ path: `${screenshotDir}/2_after_first_click.png`, fullPage: false });
   }
 
+  // 카테고리 선택 — 미선택 시 발행 버튼 클릭해도 네이버가 무시함
+  try {
+    const catResult = await page.evaluate(() => {
+      // 카테고리 select 드롭다운 탐색
+      const selects = [...document.querySelectorAll('select')];
+      for (const sel of selects) {
+        if (sel.options.length > 1) {
+          // 첫 번째 실제 카테고리 옵션 선택 (index 0은 보통 "카테고리 선택" placeholder)
+          const idx = sel.options[0].value === '' ? 1 : 0;
+          if (sel.options[idx]) {
+            sel.selectedIndex = idx;
+            sel.dispatchEvent(new Event('change', { bubbles: true }));
+            return `select: ${sel.options[idx].text}`;
+          }
+        }
+      }
+      // li 클릭 방식 (드롭다운이 커스텀 UI인 경우)
+      const catItems = [...document.querySelectorAll(
+        '[class*="category"] li, [class*="Category"] li, .category_list li, .select_list li'
+      )];
+      if (catItems.length > 0) {
+        catItems[0].click();
+        return `li: ${catItems[0].textContent?.trim()}`;
+      }
+      return null;
+    });
+    if (catResult) {
+      console.log(`  카테고리 선택: ${catResult}`);
+      await page.waitForTimeout(500);
+    } else {
+      console.log('  카테고리 선택 불필요 또는 기본값 사용');
+    }
+  } catch (e) {
+    console.log(`  카테고리 선택 스킵: ${e.message}`);
+  }
+
   // 스크린샷: 2차 클릭 직전
   if (screenshotDir) {
     await page.screenshot({ path: `${screenshotDir}/2b_before_confirm.png`, fullPage: false });
@@ -319,6 +355,12 @@ async function clickPublish(page, screenshotDir) {
 
   if (!clicked2) throw new Error('2차 발행 확인 버튼을 찾을 수 없습니다');
   console.log('  2차 발행 확인 버튼 클릭 완료');
+
+  // 스크린샷: 2차 클릭 직후 (에러 팝업 or 발행 중 상태 확인)
+  await page.waitForTimeout(1500);
+  if (screenshotDir) {
+    await page.screenshot({ path: `${screenshotDir}/2c_after_confirm_click.png`, fullPage: false });
+  }
 
   // 발행 후 URL 변경 대기 (최대 10초) + navigation 동시 감지
   try {
