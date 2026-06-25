@@ -7,6 +7,22 @@ import { send, notifyStart, notifyError } from '../core/reporter.js';
 
 const DEPARTMENT = 'marketing';
 
+const CAFE24_API_BASE = process.env.CAFE24_API_URL.replace('/report.php', '');
+const CAFE24_API_KEY  = process.env.CAFE24_API_KEY;
+
+async function isMarketingAutoApproveEnabled() {
+  try {
+    const res = await fetch(
+      `${CAFE24_API_BASE}/get_setting.php?key=marketing_auto_approve`,
+      { headers: { 'X-Api-Key': CAFE24_API_KEY } },
+    );
+    const { value } = await res.json();
+    return value === '1';
+  } catch {
+    return false;
+  }
+}
+
 // sales.js와 동일한 18개 업종 (날짜 기반 3개 순환)
 const SECTORS = [
   { name: '외식업 (맛집/카페)',            keywords: ['맛집 블로그', '카페 인테리어', '메뉴 소개'] },
@@ -99,6 +115,9 @@ export async function run() {
   const todaySectors = getTodaySectors();
   console.log(`\n✍️  [마케팅팀] 오늘의 콘텐츠 생성 시작 - ${todaySectors.map(s => s.name).join(', ')}`);
 
+  const autoApprove = await isMarketingAutoApproveEnabled();
+  if (autoApprove) console.log('  → 자동 승인 모드 ON');
+
   await notifyStart(DEPARTMENT, '일일 콘텐츠 생성');
 
   for (const sector of todaySectors) {
@@ -111,7 +130,7 @@ export async function run() {
       ]);
 
       // 블로그 포스팅 초안 → 대시보드 승인 대기열에 저장
-      await send({
+      const blogRes = await send({
         department:      DEPARTMENT,
         task_type:       '블로그 포스팅 초안 생성',
         status:          'completed',
@@ -123,9 +142,16 @@ export async function run() {
         target_platform: 'naver_blog',
         target_audience: sector.name,
       });
+      if (autoApprove && blogRes?.content_queue_id) {
+        await fetch(`${CAFE24_API_BASE}/auto_approve_marketing.php`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Api-Key': CAFE24_API_KEY },
+          body: JSON.stringify({ content_queue_id: blogRes.content_queue_id }),
+        });
+      }
 
       // 인스타 캡션 → 대시보드 승인 대기열에 저장
-      await send({
+      const snsRes = await send({
         department:      DEPARTMENT,
         task_type:       'SNS 캡션 생성',
         status:          'completed',
@@ -137,6 +163,13 @@ export async function run() {
         target_platform: 'instagram',
         target_audience: sector.name,
       });
+      if (autoApprove && snsRes?.content_queue_id) {
+        await fetch(`${CAFE24_API_BASE}/auto_approve_marketing.php`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Api-Key': CAFE24_API_KEY },
+          body: JSON.stringify({ content_queue_id: snsRes.content_queue_id }),
+        });
+      }
 
       console.log(`  ✅ [${sector.name}] 완료`);
 

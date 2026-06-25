@@ -14,8 +14,8 @@ $pdo = getDbConnection();
 // 자동 승인 설정 조회
 $autoApproveRow = $pdo->query("SELECT value FROM settings WHERE key_name = 'chm_auto_approve' LIMIT 1")->fetch();
 $chmAutoApprove = ($autoApproveRow['value'] ?? '0') === '1';
-$salesAutoApproveRow = $pdo->query("SELECT value FROM settings WHERE key_name = 'sales_auto_approve' LIMIT 1")->fetch();
-$salesAutoApprove = ($salesAutoApproveRow['value'] ?? '0') === '1';
+$marketingAutoApproveRow = $pdo->query("SELECT value FROM settings WHERE key_name = 'marketing_auto_approve' LIMIT 1")->fetch();
+$marketingAutoApprove = ($marketingAutoApproveRow['value'] ?? '0') === '1';
 
 // 필터
 $filter = $_GET['filter'] ?? 'pending';
@@ -87,15 +87,15 @@ function formatAudience(string $raw): string {
   <div class="d-flex justify-content-between align-items-center mb-3">
     <div class="d-flex align-items-center gap-3">
       <div class="d-flex align-items-center gap-2 me-3">
-        <span class="text-white small">영업팀 자동 승인</span>
+        <span class="text-white small">마케팅팀 자동 승인</span>
         <div class="form-check form-switch mb-0">
-          <input class="form-check-input" type="checkbox" id="salesAutoApproveToggle"
-                 <?= $salesAutoApprove ? 'checked' : '' ?>
-                 onchange="toggleSalesAutoApprove(this.checked)"
+          <input class="form-check-input" type="checkbox" id="marketingAutoApproveToggle"
+                 <?= $marketingAutoApprove ? 'checked' : '' ?>
+                 onchange="toggleMarketingAutoApprove(this.checked)"
                  style="cursor:pointer;width:2.5rem;height:1.25rem;">
         </div>
-        <span id="salesAutoApproveLabel" class="badge <?= $salesAutoApprove ? 'bg-success' : 'bg-secondary' ?>">
-          <?= $salesAutoApprove ? '자동 승인 ON' : '수동 승인' ?>
+        <span id="marketingAutoApproveLabel" class="badge <?= $marketingAutoApprove ? 'bg-success' : 'bg-secondary' ?>">
+          <?= $marketingAutoApprove ? '자동 승인 ON' : '수동 승인' ?>
         </span>
       </div>
       <div class="d-flex align-items-center gap-2">
