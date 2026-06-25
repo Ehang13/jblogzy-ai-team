@@ -1,0 +1,36 @@
+name: Cafe24 API 연결 테스트
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: Cafe24 API 연결 확인
+        run: |
+          echo "=== 외부 IP 확인 ==="
+          curl -s https://ipinfo.io/json | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'IP: {d[\"ip\"]}, 국가: {d[\"country\"]}, 도시: {d.get(\"city\",\"\")}') "
+
+          echo ""
+          echo "=== report.php 테스트 ==="
+          STATUS=$(curl -s -o /tmp/resp.txt -w "%{http_code}" -X POST \
+            -H "Content-Type: application/json" \
+            -H "X-Api-Key: ${{ secrets.CAFE24_API_KEY }}" \
+            -d '{"department":"test","task_type":"ping","status":"completed","summary":"GitHub Actions 연결 테스트"}' \
+            "${{ secrets.CAFE24_API_URL }}")
+          echo "HTTP 상태: $STATUS"
+          echo "응답 본문 (처음 500자):"
+          head -c 500 /tmp/resp.txt
+
+          echo ""
+          echo "=== fetch_approved_leads.php 테스트 ==="
+          BASE=$(echo "${{ secrets.CAFE24_API_URL }}" | sed 's|/report.php||')
+          STATUS2=$(curl -s -o /tmp/resp2.txt -w "%{http_code}" \
+            -H "X-Api-Key: ${{ secrets.CAFE24_API_KEY }}" \
+            "$BASE/fetch_approved_leads.php")
+          echo "HTTP 상태: $STATUS2"
+          echo "응답 본문 (처음 500자):"
+          head -c 500 /tmp/resp2.txt
