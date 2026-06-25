@@ -176,33 +176,30 @@ async function clickPublish(page, screenshotDir) {
     console.log('  📸 스크린샷 저장: 1_before_publish.png');
   }
 
-  // 에디터 포커스 해제 (타이핑 직후 포커스가 에디터에 있으면 발행 클릭 무시됨)
+  // 우측 패널이 발행 버튼을 가리는 경우 닫기
+  try {
+    const closeBtn = page.locator('.se-help-panel-close-button');
+    if (await closeBtn.isVisible({ timeout: 1500 }).catch(() => false)) {
+      await closeBtn.click();
+      console.log('  우측 패널 닫기 완료');
+      await page.waitForTimeout(600);
+    }
+  } catch {}
+
+  // 에디터 포커스 해제
   await page.keyboard.press('Escape');
-  await page.waitForTimeout(800);
+  await page.waitForTimeout(500);
 
-  // 발행 버튼 정확한 위치 확인
-  const publishRect = await page.evaluate(() => {
-    const btn = [...document.querySelectorAll('button')]
-      .find(b => (b.textContent || '').trim() === '발행');
-    if (!btn) return null;
-    const r = btn.getBoundingClientRect();
-    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), cls: btn.className };
-  });
-  console.log('  발행 버튼 위치:', JSON.stringify(publishRect));
-
-  // 1차: page.mouse.click() — 실제 마우스 이벤트로 클릭 (가장 신뢰할 수 있는 방법)
+  // 1차: force:true — 덮여있어도 직접 발행 버튼 이벤트 트리거
   let clicked1 = false;
-  if (publishRect) {
-    await page.mouse.move(publishRect.x, publishRect.y);
-    await page.waitForTimeout(200);
-    await page.mouse.click(publishRect.x, publishRect.y);
+  try {
+    await page.locator('.publish_btn__m9KHH').click({ force: true, timeout: 5000 });
     clicked1 = true;
-  }
+  } catch {}
 
   if (!clicked1) {
-    // fallback: CSS 클래스로 직접
     try {
-      await page.locator('button.publish_btn__m9KHH').click({ timeout: 3000 });
+      await page.locator('button').filter({ hasText: /^발행$/ }).click({ force: true, timeout: 3000 });
       clicked1 = true;
     } catch {}
   }
@@ -221,24 +218,35 @@ async function clickPublish(page, screenshotDir) {
   // 2차: 패널 내 '발행' 확인 버튼 — mouse.click()으로 실제 좌표 클릭
   let clicked2 = false;
 
-  const panelRect = await page.evaluate(() => {
-    const candidates = [...document.querySelectorAll('button')]
-      .filter(e => {
+  // 패널 발행 버튼: y>50 이고 "예약" 없는 발행 버튼 (툴바 버튼 제외)
+  const panelBtnInfo = await page.evaluate(() => {
+    const all = [...document.querySelectorAll('button')];
+    const candidates = all.filter(e => {
+      const txt = (e.textContent || '').trim();
+      const y = e.getBoundingClientRect().top;
+      return txt.includes('발행') && !txt.includes('예약') && !txt.includes('임시') && y > 50;
+    });
+    return candidates.map(e => {
+      const r = e.getBoundingClientRect();
+      return { text: (e.textContent||'').trim().substring(0,20), cls: e.className.substring(0,40), y: Math.round(r.top), x: Math.round(r.left + r.width/2), cy: Math.round(r.top + r.height/2) };
+    });
+  });
+  console.log('  패널 발행 버튼 후보:', JSON.stringify(panelBtnInfo));
+
+  if (panelBtnInfo.length > 0) {
+    // y가 가장 아래인 버튼 클릭 (패널 확인 버튼)
+    const target = panelBtnInfo.sort((a, b) => b.y - a.y)[0];
+    await findAndPlaywrightClick(page, () => {
+      const all = [...document.querySelectorAll('button')];
+      const candidates = all.filter(e => {
         const txt = (e.textContent || '').trim();
         const y = e.getBoundingClientRect().top;
-        return txt.includes('발행') && !txt.includes('예약') && !txt.includes('임시') && y > 200;
+        return txt.includes('발행') && !txt.includes('예약') && !txt.includes('임시') && y > 50;
       });
-    if (!candidates.length) return null;
-    candidates.sort((a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top);
-    const r = candidates[0].getBoundingClientRect();
-    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), text: (candidates[0].textContent || '').trim().substring(0, 20) };
-  });
-  console.log('  패널 발행 버튼 위치:', JSON.stringify(panelRect));
-
-  if (panelRect) {
-    await page.mouse.move(panelRect.x, panelRect.y);
-    await page.waitForTimeout(200);
-    await page.mouse.click(panelRect.x, panelRect.y);
+      if (!candidates.length) return null;
+      candidates.sort((a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top);
+      return candidates[0];
+    });
     clicked2 = true;
   }
 
