@@ -71,10 +71,14 @@ function pickTodaysIndustries() {
   return [...ALL_INDUSTRIES]; // 매 실행마다 전체 18개
 }
 
+function dayOfYearKST() {
+  const kst = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
+  const start = new Date(kst.getFullYear(), 0, 0);
+  return Math.floor((kst - start) / 86400000);
+}
+
 function pickTodaysRegion() {
-  const start   = new Date(new Date().getFullYear(), 0, 0);
-  const dayOfYear = Math.floor((Date.now() - start) / 86400000);
-  return ALL_REGIONS[dayOfYear % ALL_REGIONS.length];
+  return ALL_REGIONS[dayOfYearKST() % ALL_REGIONS.length];
 }
 
 // ─────────────────────────────────────────────

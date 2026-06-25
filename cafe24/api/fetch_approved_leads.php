@@ -5,11 +5,7 @@ header('Content-Type: application/json; charset=utf-8');
 require_once __DIR__ . '/../config.php';
 require_once __DIR__ . '/auth.php';
 
-if (!validateApiKey()) {
-    http_response_code(401);
-    echo json_encode(['error' => 'Unauthorized']);
-    exit;
-}
+verifyApiKey();
 
 try {
     $pdo  = getDbConnection();

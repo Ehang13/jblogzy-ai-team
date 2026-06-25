@@ -29,10 +29,16 @@ const SECTORS = [
   { name: '아동/육아 (키즈카페/유아교육)',keywords: ['키즈카페 추천', '유아 교육', '육아 일기'] },
 ];
 
-// 날짜 기반 3개 업종 순환 (18개 전체 커버)
+function dayOfYearKST() {
+  const kst = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
+  const start = new Date(kst.getFullYear(), 0, 0);
+  return Math.floor((kst - start) / 86400000);
+}
+
+// 날짜 기반 3개 업종 순환 (18개 전체 커버, KST 기준)
 function getTodaySectors() {
-  const dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0)) / 86400000);
-  return [0, 1, 2].map(i => SECTORS[(dayOfYear * 3 + i) % SECTORS.length]);
+  const day = dayOfYearKST();
+  return [0, 1, 2].map(i => SECTORS[(day * 3 + i) % SECTORS.length]);
 }
 
 async function generateBlogPost(sector) {
@@ -111,7 +117,7 @@ export async function run() {
         status:          'completed',
         summary:         `[${sector.name}] 블로그 초안 생성 완료 - 승인 대기 중`,
         content_type:    'blog_post',
-        content_title:   `[${sector.name}] jblogzy 활용법 - ${new Date().toLocaleDateString('ko-KR')}`,
+        content_title:   `[${sector.name}] jblogzy 활용법 - ${new Date().toLocaleDateString('ko-KR', { timeZone: 'Asia/Seoul' })}`,
         content_body:    blogPost,
         image_prompt:    imagePrompt,
         target_platform: 'naver_blog',
