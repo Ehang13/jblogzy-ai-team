@@ -23,16 +23,31 @@ async function isLoggedIn(context, page) {
   return cookies.some(c => c.name === 'NID_AUT');
 }
 
-// 작성 중 팝업 처리 (이전 임시저장 글 있을 때)
+// SE3 팝업 처리 (임시저장 확인 팝업 등)
+// .se-popup-alert-confirm 이 클릭을 막는 경우 닫아줌
 async function handleDraftPopup(page) {
   try {
-    for (const sel of ['button:has-text("아니오")', 'button:has-text("취소")', 'button:has-text("나가기")']) {
-      const btn = page.locator(sel).first();
-      if (await btn.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await btn.click();
-        await page.waitForTimeout(800);
-        return;
+    const popup = page.locator('.se-popup-alert-confirm, .se-popup-alert');
+    if (await popup.first().isVisible({ timeout: 3000 }).catch(() => false)) {
+      console.log('  팝업 감지 → 닫는 중...');
+      // SE3 팝업 버튼: 보통 두 번째 버튼이 "아니오"/"취소"
+      const popupBtns = popup.first().locator('button');
+      const count = await popupBtns.count();
+      if (count >= 2) {
+        await popupBtns.nth(count - 1).click(); // 마지막 버튼 = 아니오/취소
+      } else if (count === 1) {
+        await popupBtns.first().click();
+      } else {
+        // 버튼 텍스트로 폴백
+        for (const text of ['아니오', '취소', '나가기', '닫기', '확인']) {
+          const btn = page.locator(`button:has-text("${text}")`).first();
+          if (await btn.isVisible({ timeout: 500 }).catch(() => false)) {
+            await btn.click();
+            break;
+          }
+        }
       }
+      await page.waitForTimeout(1000);
     }
   } catch {}
 }
@@ -190,10 +205,13 @@ export async function postToNaverBlog({ title, content, tags = [], blogId }) {
     // 블로그 글쓰기 페이지 이동
     await page.goto(WRITE_URL(blogId), { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.waitForTimeout(2000);
-    await handleDraftPopup(page);
 
     // 에디터 컨텍스트 탐색 (SE3: 메인 DOM 직접 접근)
     const editorCtx = await findEditorContext(page);
+
+    // 에디터 로드 완료 후 팝업 처리 (임시저장 팝업은 에디터 로드 후 나타남)
+    await handleDraftPopup(page);
+    await page.waitForTimeout(500);
 
     // 제목 입력
     await inputTitle(editorCtx, title);
