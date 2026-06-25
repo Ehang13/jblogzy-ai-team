@@ -64,11 +64,24 @@ $stmtStats->execute([$today]);
 $stats = $stmtStats->fetch();
 
 $industryColors = [
-    '외식업'   => 'success',
-    '미용실'   => 'info',
-    '헬스장'   => 'warning',
-    '카페'     => 'primary',
-    '필라테스' => 'danger',
+    '외식업 (맛집/카페)'             => 'success',
+    '미용 (헤어/네일/속눈썹)'        => 'danger',
+    '피트니스 (헬스/필라테스/요가)'  => 'warning',
+    '병원/의원 (치과/한의원/피부과)' => 'info',
+    '정형외과'                        => 'primary',
+    '안과'                            => 'info',
+    '성형외과'                        => 'danger',
+    '교육 (학원/과외)'               => 'warning',
+    '반려동물 (동물병원/펫샵)'       => 'success',
+    '인테리어/시공'                   => 'cyan',
+    '부동산/공인중개사'               => 'primary',
+    '숙박업 (펜션/게스트하우스)'     => 'info',
+    '자동차 (정비/세차)'             => 'warning',
+    '사진관/스튜디오'                 => 'danger',
+    '꽃집/화원'                       => 'success',
+    '건강/웰니스 (마사지/스파)'      => 'teal',
+    '의류/패션 (쇼핑몰)'            => 'primary',
+    '아동/육아 (키즈카페/유아교육)' => 'orange',
 ];
 ?>
 <!DOCTYPE html>

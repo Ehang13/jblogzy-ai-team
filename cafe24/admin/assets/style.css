@@ -112,6 +112,16 @@ body {
 }
 .table-dark th { color: var(--text-muted); font-weight: 500; font-size: 0.85rem; }
 
+/* 테이블 내 흐린 텍스트 가시성 개선 */
+.table-dark .text-muted { color: #94a3b8 !important; }
+.table-dark td .small   { font-size: 0.875rem; color: #cbd5e1; }
+.table-dark td .small.text-muted { color: #94a3b8 !important; }
+
+/* 업종 커스텀 뱃지 색상 */
+.badge.bg-cyan   { background-color: #0891b2 !important; color: #fff; }
+.badge.bg-teal   { background-color: #0d9488 !important; color: #fff; }
+.badge.bg-orange { background-color: #ea580c !important; color: #fff; }
+
 /* 네비게이션 링크 */
 .btn-outline-primary  { border-color: #3b82f6; color: #3b82f6; }
 .btn-outline-success  { border-color: #22c55e; color: #22c55e; }
