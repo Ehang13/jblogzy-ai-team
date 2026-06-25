@@ -157,23 +157,9 @@ async function findAndPlaywrightClick(page, findFn) {
 async function clickPublish(page, screenshotDir) {
   const writeUrl = page.url();
 
-  // 디버그: 현재 페이지의 모든 프레임 목록 출력
-  const frameInfo = page.frames().map(f => `[${f.name()||'main'}] ${f.url().substring(0,80)}`);
-  console.log('  프레임 목록:');
-  frameInfo.forEach(f => console.log('   ', f));
-
-  // 디버그: 발행 관련 버튼 전체 목록 출력
-  const btnInfo = await page.evaluate(() => {
-    return [...document.querySelectorAll('button')]
-      .map(b => ({ text: (b.textContent||'').trim().substring(0,30), cls: b.className.substring(0,50) }))
-      .filter(b => b.text.length > 0);
-  });
-  console.log('  버튼 목록:', JSON.stringify(btnInfo));
-
   // 스크린샷 1: 발행 전
   if (screenshotDir) {
     await page.screenshot({ path: `${screenshotDir}/1_before_publish.png`, fullPage: false });
-    console.log('  📸 스크린샷 저장: 1_before_publish.png');
   }
 
   // 우측 패널이 발행 버튼을 가리는 경우 닫기
@@ -188,80 +174,137 @@ async function clickPublish(page, screenshotDir) {
 
   // 에디터 포커스 해제
   await page.keyboard.press('Escape');
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(800);
 
-  // 1차: force:true — 덮여있어도 직접 발행 버튼 이벤트 트리거
+  // 1차: 툴바 발행 버튼 클릭 — JS로 오른쪽 상단 버튼 탐색 우선
   let clicked1 = false;
-  try {
-    await page.locator('.publish_btn__m9KHH').click({ force: true, timeout: 5000 });
-    clicked1 = true;
-  } catch {}
 
+  // 전략 A: JS로 오른쪽 상단 영역(x>600, y<120)에서 "발행" 텍스트 버튼 찾기
+  if (!clicked1) {
+    const jsClicked = await page.evaluate(() => {
+      const btns = [...document.querySelectorAll('button')];
+      // 오른쪽 상단 영역의 발행 버튼 (툴바)
+      const target = btns.find(b => {
+        const txt = (b.textContent || '').trim();
+        const r = b.getBoundingClientRect();
+        return txt === '발행' && r.width > 0 && r.x > 600 && r.y < 120;
+      });
+      if (target) { target.click(); return true; }
+      return false;
+    });
+    if (jsClicked) { clicked1 = true; console.log('  1차 클릭: JS 오른쪽 상단 버튼'); }
+  }
+
+  // 전략 B: Playwright locator — 텍스트 정확 매치
   if (!clicked1) {
     try {
-      await page.locator('button').filter({ hasText: /^발행$/ }).click({ force: true, timeout: 3000 });
+      const btns = page.locator('button').filter({ hasText: /^발행$/ });
+      const count = await btns.count();
+      // 여러 개면 마지막(오른쪽 상단)이 툴바 버튼
+      await btns.nth(count - 1).click({ force: true, timeout: 3000 });
       clicked1 = true;
+      console.log(`  1차 클릭: locator 발행 버튼 (${count}개 중 마지막)`);
     } catch {}
+  }
+
+  // 전략 C: class 포함 탐색 (class 해시가 변경돼도 'publish' 포함이면 매치)
+  if (!clicked1) {
+    const jsClicked = await page.evaluate(() => {
+      const btns = [...document.querySelectorAll('button[class*="publish"], button[class*="Publish"]')];
+      const target = btns.find(b => b.getBoundingClientRect().width > 0);
+      if (target) { target.click(); return true; }
+      return false;
+    });
+    if (jsClicked) { clicked1 = true; console.log('  1차 클릭: publish class 버튼'); }
   }
 
   if (!clicked1) throw new Error('1차 발행 버튼을 찾을 수 없습니다');
   console.log('  1차 발행 버튼 클릭 완료');
 
-  await page.waitForTimeout(3000);
-
-  // 스크린샷 2: 1차 클릭 후 (패널 열렸는지 확인)
-  if (screenshotDir) {
-    await page.screenshot({ path: `${screenshotDir}/2_after_first_click.png`, fullPage: false });
-    console.log('  📸 스크린샷 저장: 2_after_first_click.png');
+  // 발행 패널이 열릴 때까지 대기 (최대 5초)
+  let panelOpened = false;
+  try {
+    await page.waitForFunction(() => {
+      const btns = [...document.querySelectorAll('button')];
+      // 패널에 발행 버튼이 2개 이상이면 패널 열린 것으로 판단
+      const publishBtns = btns.filter(b => {
+        const txt = (b.textContent || '').trim();
+        const r = b.getBoundingClientRect();
+        return txt.includes('발행') && r.width > 0;
+      });
+      return publishBtns.length >= 2;
+    }, { timeout: 5000 });
+    panelOpened = true;
+    console.log('  발행 패널 열림 확인');
+  } catch {
+    console.log('  ⚠️  발행 패널 미감지 — 2차 클릭 시도');
   }
 
-  // 2차: 패널 내 '발행' 확인 버튼 — mouse.click()으로 실제 좌표 클릭
+  // 스크린샷 2: 패널 열린 후
+  if (screenshotDir) {
+    await page.screenshot({ path: `${screenshotDir}/2_after_first_click.png`, fullPage: false });
+  }
+
+  // 2차: 패널 내 발행 확인 버튼
+  // 1차 버튼보다 아래(y 큰) 버튼이 패널 확인 버튼
   let clicked2 = false;
 
-  // 패널 발행 버튼: y>50 이고 "예약" 없는 발행 버튼 (툴바 버튼 제외)
-  const panelBtnInfo = await page.evaluate(() => {
-    const all = [...document.querySelectorAll('button')];
-    const candidates = all.filter(e => {
-      const txt = (e.textContent || '').trim();
-      const y = e.getBoundingClientRect().top;
-      return txt.includes('발행') && !txt.includes('예약') && !txt.includes('임시') && y > 50;
+  const clicked2Result = await page.evaluate(() => {
+    const btns = [...document.querySelectorAll('button')];
+    const candidates = btns.filter(b => {
+      const txt = (b.textContent || '').trim();
+      const r = b.getBoundingClientRect();
+      return txt.includes('발행') && !txt.includes('예약') && !txt.includes('임시') && r.width > 0 && r.top > 100;
     });
-    return candidates.map(e => {
-      const r = e.getBoundingClientRect();
-      return { text: (e.textContent||'').trim().substring(0,20), cls: e.className.substring(0,40), y: Math.round(r.top), x: Math.round(r.left + r.width/2), cy: Math.round(r.top + r.height/2) };
-    });
+    if (!candidates.length) return null;
+    // y 가장 아래 = 패널 확인 버튼
+    candidates.sort((a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top);
+    const target = candidates[0];
+    const r = target.getBoundingClientRect();
+    return { text: (target.textContent||'').trim(), x: Math.round(r.left + r.width/2), y: Math.round(r.top + r.height/2) };
   });
-  console.log('  패널 발행 버튼 후보:', JSON.stringify(panelBtnInfo));
 
-  if (panelBtnInfo.length > 0) {
-    // y가 가장 아래인 버튼 클릭 (패널 확인 버튼)
-    const target = panelBtnInfo.sort((a, b) => b.y - a.y)[0];
-    await findAndPlaywrightClick(page, () => {
-      const all = [...document.querySelectorAll('button')];
-      const candidates = all.filter(e => {
-        const txt = (e.textContent || '').trim();
-        const y = e.getBoundingClientRect().top;
-        return txt.includes('발행') && !txt.includes('예약') && !txt.includes('임시') && y > 50;
-      });
-      if (!candidates.length) return null;
-      candidates.sort((a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top);
-      return candidates[0];
-    });
+  if (clicked2Result) {
+    console.log(`  2차 패널 버튼: "${clicked2Result.text}" at (${clicked2Result.x}, ${clicked2Result.y})`);
+
+    // 스크린샷: 2차 클릭 직전 (패널 상태 확인)
+    if (screenshotDir) {
+      await page.screenshot({ path: `${screenshotDir}/2b_before_confirm.png`, fullPage: false });
+    }
+
+    // 버튼이 disabled인지 확인
+    const isDisabled = await page.evaluate(({ x, y }) => {
+      const el = document.elementFromPoint(x, y);
+      return el ? (el.disabled || el.getAttribute('aria-disabled') === 'true') : true;
+    }, { x: clicked2Result.x, y: clicked2Result.y });
+    console.log(`  확인 버튼 disabled: ${isDisabled}`);
+
+    // mouse.click()으로 실제 좌표 클릭 (React 이벤트 트리거)
+    await page.mouse.move(clicked2Result.x, clicked2Result.y);
+    await page.waitForTimeout(300);
+    await page.mouse.click(clicked2Result.x, clicked2Result.y);
     clicked2 = true;
   }
 
-  console.log(`  2차 발행 버튼 클릭: ${clicked2 ? '완료' : '실패(무시)'}`);
-  await page.waitForTimeout(4000);
+  if (!clicked2) throw new Error('2차 발행 확인 버튼을 찾을 수 없습니다 — 패널이 열리지 않았거나 버튼 구조 변경');
+  console.log('  2차 발행 확인 버튼 클릭 완료');
 
-  // 스크린샷 3: 2차 클릭 후 (발행 완료 여부 확인)
-  if (screenshotDir) {
-    await page.screenshot({ path: `${screenshotDir}/3_after_second_click.png`, fullPage: false });
-    console.log('  📸 스크린샷 저장: 3_after_second_click.png');
+  // 발행 후 URL 변경 대기 (최대 8초)
+  try {
+    await page.waitForFunction(
+      (url) => location.href !== url,
+      writeUrl,
+      { timeout: 8000 }
+    );
+    console.log(`  발행 완료 URL: ${page.url()}`);
+  } catch {
+    // URL이 안 바뀌면 에러로 처리
+    throw new Error(`발행 후 URL 미변경 — 발행이 완료되지 않았습니다 (현재: ${page.url()})`);
   }
 
-  const finalUrl = page.url();
-  if (finalUrl === writeUrl) {
-    console.log('  ⚠️  URL 미변경 - 발행이 완료되지 않았을 수 있습니다');
+  // 스크린샷 3: 발행 완료
+  if (screenshotDir) {
+    await page.screenshot({ path: `${screenshotDir}/3_after_publish.png`, fullPage: false });
   }
 }
 
@@ -282,14 +325,27 @@ export async function postToNaverBlog({ title, content, tags = [], blogId }) {
 
   const browser = await chromium.launch({
     headless: true,
-    args: ['--no-sandbox', '--disable-dev-shm-usage', '--lang=ko-KR'],
+    args: [
+      '--no-sandbox',
+      '--disable-dev-shm-usage',
+      '--lang=ko-KR',
+      '--disable-blink-features=AutomationControlled',  // 봇 감지 우회
+      '--disable-web-security',
+      '--disable-features=IsolateOrigins,site-per-process',
+    ],
   });
 
   try {
     const context = await browser.newContext({
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
       locale: 'ko-KR',
       viewport: { width: 1280, height: 900 },
+      extraHTTPHeaders: { 'Accept-Language': 'ko-KR,ko;q=0.9' },
+    });
+
+    // navigator.webdriver 속성 제거 (봇 감지 우회)
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
     });
 
     await restoreCookies(context);
