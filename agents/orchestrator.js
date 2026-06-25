@@ -6,7 +6,7 @@ import cron from 'node-cron';
 import { run as runSales }     from './sales.js';
 import { run as runMarketing } from './marketing.js';
 import { run as runChm }       from './chm.js';
-import { run as runReviewer }  from './reviewer.js';
+import { run as runStrategy }  from './strategy.js';
 import { sendMail }            from '../core/mailer.js';
 
 const API_BASE = process.env.CAFE24_API_URL.replace('/report.php', '');
@@ -102,7 +102,7 @@ console.log('  · 영업팀   (salesAgent)      - 매일 08:00 / 12:00 / 16:00 /
 console.log('  · 마케팅팀 (marketingAgent)  - 매일 10:00');
 console.log('  · 고객관리팀(chmAgent)       - 매일 18:00');
 console.log('  · 이메일발송                 - 10분마다 (최대 5건/회, 90초 간격)');
-console.log('  · 자체 감사 (reviewerAgent)  - 매주 월요일 09:00');
+console.log('  · 전략기획팀 (strategyAgent) - 매주 월요일 09:00');
 console.log('');
 console.log(`⏰ 현재 시각: ${new Date().toLocaleString('ko-KR', { timeZone: TIMEZONE })}`);
 console.log('');
@@ -139,9 +139,9 @@ cron.schedule('0 18 * * *', () => {
   safeRun('고객관리팀 에이전트', runChm);
 }, { timezone: TIMEZONE });
 
-// 자체 감사 - 매주 월요일 09:00
+// 전략기획팀 - 매주 월요일 09:00
 cron.schedule('0 9 * * 1', () => {
-  safeRun('자체 감사 에이전트', runReviewer);
+  safeRun('전략기획팀 에이전트', runStrategy);
 }, { timezone: TIMEZONE });
 
 // 시작 시 즉시 테스트 실행 여부 체크 (--test 플래그)

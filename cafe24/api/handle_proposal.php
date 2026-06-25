@@ -24,7 +24,7 @@ try {
     $stmt = $pdo->prepare("
         UPDATE content_queue
         SET approval_status = ?, approved_at = NOW()
-        WHERE id = ? AND department = 'ceo' AND content_type = 'proposal'
+        WHERE id = ? AND department = 'strategy' AND content_type = 'proposal'
     ");
     $stmt->execute([$status, $id]);
 

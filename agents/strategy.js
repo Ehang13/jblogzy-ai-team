@@ -1,4 +1,4 @@
-// 자체 감사 에이전트 - 매주 월요일 09:00 실행
+// 전략기획팀 에이전트 - 매주 월요일 09:00 실행
 // 전체 시스템 설계 + 7일 운영 통계를 Claude가 분석해 문제점·설계 의문점·개선 제안을 리포트
 // 비용 발생 제안은 대시보드 승인 큐로 분리 전송
 
@@ -8,7 +8,7 @@ import { send, notifyError } from '../core/reporter.js';
 import { sendMail } from '../core/mailer.js';
 import { ALL_INDUSTRIES, ALL_REGIONS } from './sales.js';
 
-const DEPARTMENT      = 'ceo';
+const DEPARTMENT      = 'strategy';
 const CAFE24_API_BASE = process.env.CAFE24_API_URL.replace('/report.php', '');
 const CAFE24_API_KEY  = process.env.CAFE24_API_KEY;
 const ADMIN_EMAIL     = process.env.SMTP_USER;
@@ -118,7 +118,7 @@ function mdToHtml(text) {
 }
 
 export async function run() {
-  console.log('\n🔍 [자체 감사] 주간 전체 시스템 분석 시작');
+  console.log('\n🔍 [전략기획팀] 주간 전체 시스템 분석 시작');
 
   let auditData;
   try {
@@ -191,7 +191,7 @@ ${JSON.stringify(auditData, null, 2)}
   // 대시보드 전송
   await send({
     department: DEPARTMENT,
-    task_type:  '주간 자체 감사',
+    task_type:  '주간 시스템 감사',
     status:     'completed',
     summary:    `주간 자체 감사 완료 — 영업 ${auditData.sales.total_leads}건 / 마케팅 ${auditData.marketing.total_contents}건 / CHM ${auditData.chm.total_generated}건 / 비용 제안 ${costProposals.length}건`,
     detail:     report,
@@ -205,7 +205,7 @@ ${JSON.stringify(auditData, null, 2)}
         : '';
       await sendMail({
         to:      ADMIN_EMAIL,
-        subject: `[jblogzy AI팀] 주간 자체 감사 리포트`,
+        subject: `[jblogzy 전략기획팀] 주간 시스템 감사 리포트`,
         html:    costNote + mdToHtml(report),
         text:    report,
       });
@@ -215,10 +215,10 @@ ${JSON.stringify(auditData, null, 2)}
     }
   }
 
-  console.log('✅ [자체 감사] 완료\n');
+  console.log('✅ [전략기획팀] 완료\n');
 }
 
 // 직접 실행 지원
-if (process.argv[1].endsWith('reviewer.js')) {
+if (process.argv[1].endsWith('strategy.js')) {
   run().catch(console.error);
 }

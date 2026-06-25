@@ -1,4 +1,4 @@
-name: 자체 감사 - 주간 운영 리포트
+name: 전략기획팀 - 주간 시스템 감사
 
 on:
   schedule:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: reviewer
+  group: strategy
   cancel-in-progress: false
 
 jobs:
@@ -25,8 +25,8 @@ jobs:
       - name: 의존성 설치
         run: npm ci
 
-      - name: 자체 감사 실행
-        run: node agents/reviewer.js
+      - name: 전략기획팀 실행
+        run: node agents/strategy.js
         env:
           ANTHROPIC_API_KEY:   ${{ secrets.ANTHROPIC_API_KEY }}
           CAFE24_API_URL:      ${{ secrets.CAFE24_API_URL }}

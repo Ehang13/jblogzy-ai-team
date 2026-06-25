@@ -24,7 +24,7 @@ try {
         INSERT INTO content_queue
             (department, content_type, title, body, detail, approval_status, created_at)
         VALUES
-            ('ceo', 'proposal', ?, ?, ?, 'pending', NOW())
+            ('strategy', 'proposal', ?, ?, ?, 'pending', NOW())
     ");
     $stmt->execute([$title, $desc, json_encode(['estimated_cost' => $cost], JSON_UNESCAPED_UNICODE)]);
 

@@ -6,7 +6,7 @@ if (!isset($_SESSION['admin_logged_in'])) {
     header('Location: index.php'); exit;
 }
 
-$allowed = ['sales', 'marketing', 'chm', 'ceo'];
+$allowed = ['sales', 'marketing', 'chm', 'strategy'];
 $dept    = $_GET['dept'] ?? '';
 if (!in_array($dept, $allowed)) {
     header('Location: index.php'); exit;
@@ -19,7 +19,7 @@ $deptInfo = [
     'sales'     => ['name' => '영업팀',     'icon' => '📊', 'color' => 'success'],
     'marketing' => ['name' => '마케팅팀',   'icon' => '✍️', 'color' => 'primary'],
     'chm'       => ['name' => '고객관리팀', 'icon' => '🤝', 'color' => 'warning'],
-    'ceo'       => ['name' => '자체 감사',  'icon' => '🔍', 'color' => 'secondary'],
+    'strategy'  => ['name' => '전략기획팀', 'icon' => '🔍', 'color' => 'secondary'],
 ][$dept];
 
 // 오늘 부서 통계
@@ -98,11 +98,11 @@ if ($dept === 'sales') {
     ");
     $stmt->execute();
     $extra = $stmt->fetchAll();
-} elseif ($dept === 'ceo') {
+} elseif ($dept === 'strategy') {
     $stmt = $pdo->query("
         SELECT id, title, body, detail, approval_status, created_at
         FROM content_queue
-        WHERE department='ceo' AND content_type='proposal'
+        WHERE department='strategy' AND content_type='proposal'
         ORDER BY created_at DESC LIMIT 30
     ");
     $extra = $stmt->fetchAll();
@@ -326,7 +326,7 @@ $statusBadge = [
             <?php endforeach; ?>
           <?php endif; ?>
 
-        <?php elseif ($dept === 'ceo'): ?>
+        <?php elseif ($dept === 'strategy'): ?>
 
           <!-- 승인 대기 제안 -->
           <?php
@@ -366,7 +366,7 @@ $statusBadge = [
           <!-- 최신 감사 리포트 -->
           <h6 class="fw-bold mb-3">주간 자체 감사 리포트</h6>
           <?php
-            $auditLogs = array_filter($logs, fn($l) => $l['task_type'] === '주간 자체 감사');
+            $auditLogs = array_filter($logs, fn($l) => $l['task_type'] === '주간 시스템 감사');
             $latest    = reset($auditLogs);
           ?>
           <?php if (!$latest): ?>
