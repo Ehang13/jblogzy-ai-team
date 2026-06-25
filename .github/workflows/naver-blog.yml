@@ -1,0 +1,36 @@
+name: 네이버 마케팅 블로그 발행
+
+on:
+  schedule:
+    - cron: '0 0 * * *'   # 09:00 KST
+    - cron: '0 4 * * *'   # 13:00 KST
+    - cron: '0 9 * * *'   # 18:00 KST
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: 의존성 설치
+        run: npm ci
+
+      - name: Playwright Chromium 설치
+        run: npx playwright install chromium --with-deps
+
+      - name: 네이버 블로그 발행
+        run: node scripts/naver_marketing.js
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CAFE24_API_URL:    ${{ secrets.CAFE24_API_URL }}
+          CAFE24_API_KEY:    ${{ secrets.CAFE24_API_KEY }}
+          NAVER_BLOG_ID:     ${{ secrets.NAVER_BLOG_ID }}
+          NAVER_COOKIES:     ${{ secrets.NAVER_COOKIES }}

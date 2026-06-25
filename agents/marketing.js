@@ -7,19 +7,32 @@ import { send, notifyStart, notifyError } from '../core/reporter.js';
 
 const DEPARTMENT = 'marketing';
 
-// 오늘 분석할 자영업자 업종 (매일 로테이션)
+// sales.js와 동일한 18개 업종 (날짜 기반 3개 순환)
 const SECTORS = [
-  { name: '지역 맛집/카페',    keywords: ['맛집 블로그', '카페 인테리어', '메뉴 개발'] },
-  { name: '1인 미용실/네일샵', keywords: ['헤어 스타일 추천', '네일 아트', '펌 후기'] },
-  { name: '필라테스/헬스장',   keywords: ['다이어트 운동', '필라테스 효과', '홈트레이닝'] },
-  { name: '애견 미용/카페',    keywords: ['강아지 미용', '반려동물 카페', '펫 케어'] },
-  { name: '인테리어/소품숍',   keywords: ['인테리어 소품', '홈데코 트렌드', '자개 가구'] },
+  { name: '외식업 (맛집/카페)',            keywords: ['맛집 블로그', '카페 인테리어', '메뉴 소개'] },
+  { name: '미용 (헤어/네일/속눈썹)',       keywords: ['헤어 스타일', '네일 아트', '속눈썹 연장'] },
+  { name: '피트니스 (헬스/필라테스/요가)', keywords: ['다이어트 운동', '필라테스 효과', '요가 자세'] },
+  { name: '병원/의원 (치과/한의원/피부과)',keywords: ['치과 후기', '한의원 다이어트', '피부과 시술'] },
+  { name: '정형외과',                       keywords: ['허리디스크', '무릎통증', '도수치료'] },
+  { name: '안과',                           keywords: ['라식 라섹', '드림렌즈', '시력교정'] },
+  { name: '성형외과',                       keywords: ['쌍꺼풀 수술', '코성형', '지방흡입'] },
+  { name: '교육 (학원/과외)',              keywords: ['영어학원 추천', '수학 과외', '입시 전략'] },
+  { name: '반려동물 (동물병원/펫샵)',      keywords: ['강아지 미용', '반려동물 케어', '동물병원 후기'] },
+  { name: '인테리어/시공',                 keywords: ['인테리어 시공', '홈리모델링', '인테리어 비용'] },
+  { name: '부동산/공인중개사',             keywords: ['아파트 매물', '전세 계약', '부동산 투자'] },
+  { name: '숙박업 (펜션/게스트하우스)',    keywords: ['펜션 추천', '제주 숙박', '가족 여행 숙소'] },
+  { name: '자동차 (정비/세차)',            keywords: ['자동차 정비', '셀프세차', '차량 관리'] },
+  { name: '사진관/스튜디오',              keywords: ['증명사진', '가족사진', '프로필 촬영'] },
+  { name: '꽃집/화원',                    keywords: ['꽃다발 주문', '플라워 클래스', '꽃집 인테리어'] },
+  { name: '건강/웰니스 (마사지/스파)',     keywords: ['마사지 효과', '스파 추천', '힐링 여행'] },
+  { name: '의류/패션 (쇼핑몰)',           keywords: ['쇼핑몰 운영', '패션 블로그', '스타일링 팁'] },
+  { name: '아동/육아 (키즈카페/유아교육)',keywords: ['키즈카페 추천', '유아 교육', '육아 일기'] },
 ];
 
-// 오늘 날짜 기준으로 업종 순환 선택 (3개)
+// 날짜 기반 3개 업종 순환 (18개 전체 커버)
 function getTodaySectors() {
   const dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0)) / 86400000);
-  return [0, 1, 2].map(i => SECTORS[(dayOfYear + i) % SECTORS.length]);
+  return [0, 1, 2].map(i => SECTORS[(dayOfYear * 3 + i) % SECTORS.length]);
 }
 
 async function generateBlogPost(sector) {

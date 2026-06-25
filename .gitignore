@@ -3,3 +3,4 @@ node_modules/
 *.log
 cafe24/config.php
 data/
+naver_cookies.json
