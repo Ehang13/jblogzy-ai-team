@@ -343,13 +343,42 @@ export async function postToNaverBlog({ title, content, tags = [], blogId }) {
       extraHTTPHeaders: { 'Accept-Language': 'ko-KR,ko;q=0.9' },
     });
 
-    // navigator.webdriver 속성 제거 (봇 감지 우회)
+    // 봇 감지 우회 — 다수의 자동화 탐지 벡터 패치
     await context.addInitScript(() => {
+      // webdriver 제거
       Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+      // window.chrome 정의 (headless에서 없음)
+      window.chrome = { runtime: {}, app: { isInstalled: false } };
+      // plugins 배열 (headless는 0개 → 탐지됨)
+      Object.defineProperty(navigator, 'plugins', {
+        get: () => [1, 2, 3, 4, 5],
+      });
+      // languages
+      Object.defineProperty(navigator, 'languages', {
+        get: () => ['ko-KR', 'ko', 'en-US', 'en'],
+      });
+      // permissions.query: notifications 는 'default' 반환
+      const origQuery = window.navigator.permissions?.query?.bind(navigator.permissions);
+      if (origQuery) {
+        navigator.permissions.query = (params) =>
+          params.name === 'notifications'
+            ? Promise.resolve({ state: 'default' })
+            : origQuery(params);
+      }
     });
 
     await restoreCookies(context);
     const page = await context.newPage();
+
+    // 발행 관련 네트워크 응답 모니터링
+    page.on('response', (response) => {
+      const url = response.url();
+      if (url.includes('blog.naver.com') && (
+        url.includes('Post') || url.includes('post') || url.includes('publish') || url.includes('save')
+      )) {
+        console.log(`  [NET] ${response.status()} ${url.substring(0, 100)}`);
+      }
+    });
 
     // 로그인 확인
     const loggedIn = await isLoggedIn(context, page);
