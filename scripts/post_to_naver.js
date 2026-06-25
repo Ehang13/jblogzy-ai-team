@@ -286,14 +286,18 @@ async function clickPublish(page, screenshotDir) {
     await page.screenshot({ path: `${screenshotDir}/2b_before_confirm.png`, fullPage: false });
   }
 
-  // 전체 naver.com 응답 임시 로깅 (발행 API URL 특정용)
-  const publishResponses = [];
+  // 발행 API 네트워크 전체 모니터링 (page + 모든 하위 frame 포함)
+  const publishLogs = [];
+  const context = page.context();
   const responseListener = (response) => {
-    if (response.url().includes('naver.com')) {
-      publishResponses.push(`${response.status()} ${response.url().substring(0, 120)}`);
-    }
+    publishLogs.push(`${response.status()} ${response.request().method()} ${response.url().substring(0, 150)}`);
   };
-  page.on('response', responseListener);
+  const failListener = (request) => {
+    publishLogs.push(`FAIL ${request.method()} ${request.url().substring(0, 150)} — ${request.failure()?.errorText}`);
+  };
+  // context 레벨로 등록하면 모든 페이지/프레임의 요청 캐치 가능
+  context.on('response', responseListener);
+  context.on('requestfailed', failListener);
 
   // JS 오류 캐치
   page.on('pageerror', (err) => console.log(`  [JS Error] ${err.message.substring(0, 100)}`));
@@ -362,7 +366,22 @@ async function clickPublish(page, screenshotDir) {
     await page.screenshot({ path: `${screenshotDir}/2c_after_confirm_click.png`, fullPage: false });
   }
 
-  // 발행 후 URL 변경 대기 (최대 10초) + navigation 동시 감지
+  // 에러 다이얼로그 처리 (페이지를 찾을 수 없습니다 → 확인 클릭 후 재시도)
+  let errorDialogClicked = false;
+  try {
+    const errDialog = page.locator('button:has-text("확인")').filter({ hasText: /^확인$/ });
+    if (await errDialog.isVisible({ timeout: 2000 }).catch(() => false)) {
+      const errText = await page.locator('text=페이지를 찾을 수 없습니다').isVisible({ timeout: 500 }).catch(() => false);
+      if (errText) {
+        console.log('  ⚠️  네이버 오류 다이얼로그 감지: 페이지를 찾을 수 없습니다');
+        await errDialog.first().click();
+        errorDialogClicked = true;
+        await page.waitForTimeout(1000);
+      }
+    }
+  } catch {}
+
+  // 발행 후 URL 변경 대기 (최대 10초)
   try {
     await page.waitForFunction(
       (url) => location.href !== url,
@@ -371,12 +390,16 @@ async function clickPublish(page, screenshotDir) {
     );
     console.log(`  발행 완료 URL: ${page.url()}`);
   } catch {
-    // 실패 시 실제로 어떤 API가 호출됐는지 로그 출력
-    console.log('  [NET 발행 이후 요청 목록]:');
-    publishResponses.forEach(r => console.log('   ', r));
+    // 실패 시 캡처한 모든 네트워크 요청 출력
+    console.log(`  [NET 발행 이후 전체 요청 ${publishLogs.length}건]:`);
+    publishLogs.slice(-20).forEach(r => console.log('   ', r));
+    if (errorDialogClicked) {
+      throw new Error('발행 실패: 네이버 서버 오류 발생 (페이지를 찾을 수 없습니다) — IP 차단 또는 CSRF 토큰 문제일 수 있습니다');
+    }
     throw new Error(`발행 후 URL 미변경 (현재: ${page.url()})`);
   } finally {
-    page.off('response', responseListener);
+    context.off('response', responseListener);
+    context.off('requestfailed', failListener);
   }
 
   // 스크린샷 3: 발행 완료
