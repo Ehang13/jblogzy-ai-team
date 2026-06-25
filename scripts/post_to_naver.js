@@ -176,18 +176,33 @@ async function clickPublish(page, screenshotDir) {
     console.log('  📸 스크린샷 저장: 1_before_publish.png');
   }
 
-  // 1차: 우측 상단 '발행' 버튼 (정확히 "발행" 텍스트만 — "예약 발행 0건" 제외)
+  // 에디터 포커스 해제 (타이핑 직후 포커스가 에디터에 있으면 발행 클릭 무시됨)
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(800);
+
+  // 발행 버튼 정확한 위치 확인
+  const publishRect = await page.evaluate(() => {
+    const btn = [...document.querySelectorAll('button')]
+      .find(b => (b.textContent || '').trim() === '발행');
+    if (!btn) return null;
+    const r = btn.getBoundingClientRect();
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), cls: btn.className };
+  });
+  console.log('  발행 버튼 위치:', JSON.stringify(publishRect));
+
+  // 1차: page.mouse.click() — 실제 마우스 이벤트로 클릭 (가장 신뢰할 수 있는 방법)
   let clicked1 = false;
-  try {
-    // /^발행$/ = 텍스트가 정확히 "발행"인 버튼만 매치
-    await page.locator('button').filter({ hasText: /^발행$/ }).click({ force: true, timeout: 5000 });
+  if (publishRect) {
+    await page.mouse.move(publishRect.x, publishRect.y);
+    await page.waitForTimeout(200);
+    await page.mouse.click(publishRect.x, publishRect.y);
     clicked1 = true;
-  } catch {}
+  }
 
   if (!clicked1) {
-    // fallback: getByRole exact match
+    // fallback: CSS 클래스로 직접
     try {
-      await page.getByRole('button', { name: '발행', exact: true }).click({ force: true, timeout: 3000 });
+      await page.locator('button.publish_btn__m9KHH').click({ timeout: 3000 });
       clicked1 = true;
     } catch {}
   }
@@ -203,45 +218,28 @@ async function clickPublish(page, screenshotDir) {
     console.log('  📸 스크린샷 저장: 2_after_first_click.png');
   }
 
-  // 2차: 패널 내 '발행' 확인 버튼
-  // 1차 클릭 후 패널이 열리면 "발행" 버튼이 2개가 됨 (툴바 + 패널)
-  // 패널 버튼은 y좌표가 훨씬 아래에 있음
+  // 2차: 패널 내 '발행' 확인 버튼 — mouse.click()으로 실제 좌표 클릭
   let clicked2 = false;
 
-  // 전략 1: 패널에 새 발행 버튼이 나타날 때까지 대기
-  try {
-    // y좌표가 200px 이상인 "발행" 버튼 = 패널 버튼
-    clicked2 = await findAndPlaywrightClick(page, () => {
-      const candidates = [...document.querySelectorAll('button')]
-        .filter(e => {
-          const txt = (e.textContent || '').trim();
-          const y = e.getBoundingClientRect().top;
-          return txt.includes('발행') && !txt.includes('예약') && !txt.includes('임시') && y > 200;
-        });
-      if (!candidates.length) return null;
-      candidates.sort((a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top);
-      return candidates[0];
-    });
-  } catch {}
+  const panelRect = await page.evaluate(() => {
+    const candidates = [...document.querySelectorAll('button')]
+      .filter(e => {
+        const txt = (e.textContent || '').trim();
+        const y = e.getBoundingClientRect().top;
+        return txt.includes('발행') && !txt.includes('예약') && !txt.includes('임시') && y > 200;
+      });
+    if (!candidates.length) return null;
+    candidates.sort((a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top);
+    const r = candidates[0].getBoundingClientRect();
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), text: (candidates[0].textContent || '').trim().substring(0, 20) };
+  });
+  console.log('  패널 발행 버튼 위치:', JSON.stringify(panelRect));
 
-  // 전략 2: 패널 컨테이너 내부의 버튼 찾기
-  if (!clicked2) {
-    try {
-      const panelSelectors = [
-        '[class*="publishLayer"] button',
-        '[class*="publish_layer"] button',
-        '[class*="PublishPanel"] button',
-        '[class*="publish-panel"] button',
-      ];
-      for (const sel of panelSelectors) {
-        const btn = page.locator(sel).filter({ hasText: /발행/ }).last();
-        if (await btn.isVisible({ timeout: 1000 }).catch(() => false)) {
-          await btn.click({ force: true });
-          clicked2 = true;
-          break;
-        }
-      }
-    } catch {}
+  if (panelRect) {
+    await page.mouse.move(panelRect.x, panelRect.y);
+    await page.waitForTimeout(200);
+    await page.mouse.click(panelRect.x, panelRect.y);
+    clicked2 = true;
   }
 
   console.log(`  2차 발행 버튼 클릭: ${clicked2 ? '완료' : '실패(무시)'}`);
