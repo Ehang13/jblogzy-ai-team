@@ -85,6 +85,14 @@ async function toggleMarketingAutoApprove(enabled) {
         label.textContent = enabled ? '자동 승인 ON' : '수동 승인';
         label.className   = `badge ${enabled ? 'bg-success' : 'bg-secondary'}`;
       }
+      if (enabled) {
+        const bulkRes  = await fetch('../api/bulk_approve_marketing.php', { method: 'POST' });
+        const bulkData = await bulkRes.json();
+        if (bulkData.approved > 0) {
+          alert(`기존 대기 중인 마케팅팀 콘텐츠 ${bulkData.approved}건이 자동 승인되었습니다.`);
+          window.location.reload();
+        }
+      }
     } else {
       alert('설정 변경 실패: ' + (data.error || '알 수 없는 오류'));
     }
@@ -107,6 +115,14 @@ async function toggleAutoApprove(enabled) {
       if (label) {
         label.textContent = enabled ? '자동 승인 ON' : '수동 승인';
         label.className   = `badge ${enabled ? 'bg-success' : 'bg-secondary'}`;
+      }
+      if (enabled) {
+        const bulkRes  = await fetch('../api/bulk_approve_chm.php', { method: 'POST' });
+        const bulkData = await bulkRes.json();
+        if (bulkData.approved > 0) {
+          alert(`기존 대기 중인 고객관리팀 콘텐츠 ${bulkData.approved}건이 자동 승인되었습니다.`);
+          window.location.reload();
+        }
       }
     } else {
       alert('설정 변경 실패: ' + (data.error || '알 수 없는 오류'));
