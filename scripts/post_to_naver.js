@@ -154,20 +154,35 @@ async function findAndPlaywrightClick(page, findFn) {
 }
 
 // 발행 버튼 클릭 (2단계: 상단 발행 → 패널 확인 발행)
-async function clickPublish(page) {
+async function clickPublish(page, screenshotDir) {
   const writeUrl = page.url();
 
-  // 1차: 우측 상단 '발행' 버튼
-  // evaluateHandle로 찾고 Playwright ElementHandle.click()으로 React 이벤트 트리거
-  let clicked1 = false;
+  // 디버그: 현재 페이지의 모든 프레임 목록 출력
+  const frameInfo = page.frames().map(f => `[${f.name()||'main'}] ${f.url().substring(0,80)}`);
+  console.log('  프레임 목록:');
+  frameInfo.forEach(f => console.log('   ', f));
 
-  // 전략 1: Playwright locator (regex)
+  // 디버그: 발행 관련 버튼 전체 목록 출력
+  const btnInfo = await page.evaluate(() => {
+    return [...document.querySelectorAll('button')]
+      .map(b => ({ text: (b.textContent||'').trim().substring(0,30), cls: b.className.substring(0,50) }))
+      .filter(b => b.text.length > 0);
+  });
+  console.log('  버튼 목록:', JSON.stringify(btnInfo));
+
+  // 스크린샷 1: 발행 전
+  if (screenshotDir) {
+    await page.screenshot({ path: `${screenshotDir}/1_before_publish.png`, fullPage: false });
+    console.log('  📸 스크린샷 저장: 1_before_publish.png');
+  }
+
+  // 1차: 우측 상단 '발행' 버튼
+  let clicked1 = false;
   try {
     await page.locator('button').filter({ hasText: /^발행/ }).first().click({ force: true, timeout: 3000 });
     clicked1 = true;
   } catch {}
 
-  // 전략 2: evaluateHandle + ElementHandle.click() — React 이벤트 정상 트리거
   if (!clicked1) {
     clicked1 = await findAndPlaywrightClick(page, () => {
       const all = [...document.querySelectorAll('button, a[role="button"]')];
@@ -181,36 +196,38 @@ async function clickPublish(page) {
   if (!clicked1) throw new Error('1차 발행 버튼을 찾을 수 없습니다');
   console.log('  1차 발행 버튼 클릭 완료');
 
-  // 발행 설정 패널이 열릴 때까지 대기
   await page.waitForTimeout(3000);
 
-  // 2차: 패널 내 '발행' 확인 버튼 (화면에서 가장 아래쪽 발행 버튼)
-  // evaluateHandle로 찾고 Playwright ElementHandle.click()으로 클릭
+  // 스크린샷 2: 1차 클릭 후 (패널 열렸는지 확인)
+  if (screenshotDir) {
+    await page.screenshot({ path: `${screenshotDir}/2_after_first_click.png`, fullPage: false });
+    console.log('  📸 스크린샷 저장: 2_after_first_click.png');
+  }
+
+  // 2차: 패널 내 '발행' 확인 버튼 (✓ 발행 — 시작 문자가 발행이 아닐 수 있음)
   let clicked2 = false;
-
-  // 전략 1: Playwright locator last
   try {
-    await page.locator('button').filter({ hasText: /^발행/ }).last().click({ force: true, timeout: 3000 });
-    clicked2 = true;
-  } catch {}
-
-  // 전략 2: evaluateHandle + 가장 아래 위치한 발행 버튼
-  if (!clicked2) {
+    // 패널의 확인 발행 버튼: 텍스트에 '발행' 포함, y 좌표 가장 아래
     clicked2 = await findAndPlaywrightClick(page, () => {
-      const candidates = [...document.querySelectorAll('button, a[role="button"]')]
+      const candidates = [...document.querySelectorAll('button')]
         .filter(e => {
           const txt = (e.textContent || '').trim();
           return txt.includes('발행') && !txt.includes('임시');
         });
       if (!candidates.length) return null;
-      // y좌표가 가장 큰(화면 아래) 버튼 = 패널 확인 버튼
       candidates.sort((a, b) => b.getBoundingClientRect().top - a.getBoundingClientRect().top);
       return candidates[0];
     });
-  }
+  } catch {}
 
   console.log(`  2차 발행 버튼 클릭: ${clicked2 ? '완료' : '실패(무시)'}`);
   await page.waitForTimeout(4000);
+
+  // 스크린샷 3: 2차 클릭 후 (발행 완료 여부 확인)
+  if (screenshotDir) {
+    await page.screenshot({ path: `${screenshotDir}/3_after_second_click.png`, fullPage: false });
+    console.log('  📸 스크린샷 저장: 3_after_second_click.png');
+  }
 
   const finalUrl = page.url();
   if (finalUrl === writeUrl) {
@@ -223,6 +240,15 @@ async function clickPublish(page) {
 // ─────────────────────────────────────────────
 export async function postToNaverBlog({ title, content, tags = [], blogId }) {
   if (!blogId) throw new Error('NAVER_BLOG_ID 환경변수가 없습니다');
+
+  // 스크린샷 저장 디렉토리 (GitHub Actions artifacts 업로드용)
+  const screenshotDir = process.env.RUNNER_TEMP
+    ? `${process.env.RUNNER_TEMP}/naver-screenshots`
+    : null;
+  if (screenshotDir) {
+    const { mkdirSync } = await import('fs');
+    mkdirSync(screenshotDir, { recursive: true });
+  }
 
   const browser = await chromium.launch({
     headless: true,
@@ -269,7 +295,7 @@ export async function postToNaverBlog({ title, content, tags = [], blogId }) {
     await inputTags(page, tags);
 
     // 발행 (메인 페이지 기준 2단계)
-    await clickPublish(page);
+    await clickPublish(page, screenshotDir);
     console.log('  ✅ 발행 완료');
 
     const finalUrl = page.url();

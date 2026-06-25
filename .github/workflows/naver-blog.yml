@@ -34,3 +34,12 @@ jobs:
           CAFE24_API_KEY:    ${{ secrets.CAFE24_API_KEY }}
           NAVER_BLOG_ID:     ${{ secrets.NAVER_BLOG_ID }}
           NAVER_COOKIES:     ${{ secrets.NAVER_COOKIES }}
+
+      - name: 스크린샷 업로드 (디버그용)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: naver-screenshots
+          path: ${{ runner.temp }}/naver-screenshots/
+          if-no-files-found: ignore
+          retention-days: 3
