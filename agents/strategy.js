@@ -162,6 +162,93 @@ async function setSetting(key, value) {
   } catch { /* ignore */ }
 }
 
+// ── CEO 지시 API 헬퍼 ─────────────────────────────────────────────────────
+async function updateDirectiveApi(id, fields) {
+  try {
+    await fetch(`${CAFE24_API_BASE}/api/update_directive.php`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Api-Key': CAFE24_API_KEY },
+      body:    JSON.stringify({ id, ...fields }),
+    });
+  } catch { /* ignore */ }
+}
+
+async function fetchDirectivesForStrategy() {
+  try {
+    const res = await fetch(`${CAFE24_API_BASE}/api/get_active_directives.php`, {
+      headers: { 'X-Api-Key': CAFE24_API_KEY },
+    });
+    if (!res.ok) return [];
+    return await res.json();
+  } catch { return []; }
+}
+
+async function processCeoDirectives(directives, auditData, members) {
+  if (!directives || !directives.length) return null;
+  const processed = [];
+
+  for (const d of directives) {
+    if (d.status === 'open' || d.status === 'planning') {
+      // 신규 지시: 실행 계획 + 부서별 지시 생성
+      const plan = await askJson(`
+CEO 지시: "${d.title}"
+${d.description ? `세부 내용: ${d.description}` : ''}
+대상 부서: ${d.target_departments ? d.target_departments : '전 부서 (영업팀, 마케팅팀, 고객관리팀)'}
+
+현재 운영 현황:
+- 유료 회원: ${members.paid}명 / 체험: ${members.trial}명
+
+이 지시를 실행하기 위한 계획을 JSON으로 작성:
+{
+  "plan": "전체 실행 계획 (3-4문장, 어떻게 달성할지 구체적으로)",
+  "dept_instructions": {
+    "sales": "영업팀 지시 (1-2문장, 구체적·행동 가능한 내용)",
+    "marketing": "마케팅팀 지시 (1-2문장, 콘텐츠 방향 포함)",
+    "chm": "고객관리팀 지시 (1-2문장, 이탈방지·전환 방향 포함)"
+  }
+}
+`, true);
+
+      if (plan?.plan) {
+        await updateDirectiveApi(d.id, {
+          status: 'in_progress',
+          plan: plan.plan,
+          dept_instructions: plan.dept_instructions,
+        });
+        await submitCeoRequest({
+          department:      DEPARTMENT,
+          priority:        'MEDIUM',
+          title:           `[계획 수립 완료] ${d.title}`,
+          description:     `실행 계획:\n${plan.plan}\n\n영업팀: ${plan.dept_instructions?.sales ?? '-'}\n마케팅팀: ${plan.dept_instructions?.marketing ?? '-'}\n고객관리팀: ${plan.dept_instructions?.chm ?? '-'}`,
+          action_required: '각 팀이 다음 사이클부터 지시를 자동 반영합니다. 완료 시 대시보드에서 "완료" 처리해주세요.',
+        });
+        processed.push(`"${d.title}" 계획 수립 완료`);
+      }
+    } else if (d.status === 'in_progress') {
+      // 진행 중 지시: 진행 상황 업데이트
+      const progress = await askFast(`
+CEO 지시: "${d.title}"
+실행 계획: ${d.plan ?? '미수립'}
+
+현재 운영 데이터:
+- 유료 ${members.paid}명 / 체험 ${members.trial}명
+${auditData ? `- 오늘 리드: ${auditData.leads_today ?? '?'}건 / 대기 콘텐츠: ${auditData.pending_content ?? '?'}건` : ''}
+
+지시 실행 진행 상황을 2줄로 보고하세요.
+`, 150);
+
+      const kst  = new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
+      const prev = d.progress_notes ?? '';
+      await updateDirectiveApi(d.id, {
+        progress_notes: (prev + `\n[${kst}] ${progress}`).trim().slice(-2000),
+      });
+      processed.push(`"${d.title}" 진행 업데이트`);
+    }
+  }
+
+  return processed.length ? processed.join(', ') : null;
+}
+
 // ── jblogzy 회원 현황 조회 ───────────────────────────────────────────────
 async function fetchMemberStats() {
   try {
@@ -436,8 +523,9 @@ export async function run() {
       fetchActiveGoal(),
       fetchWorkflowStats(),
       fetchRecentErrors(),
+      fetchDirectivesForStrategy(),
     ]);
-    const [auditData, memberStats, activeGoal, workflowStats, recentErrors] =
+    const [auditData, memberStats, activeGoal, workflowStats, recentErrors, activeDirectives] =
       results.map(r => r.status === 'fulfilled' ? r.value : null);
 
     const auditErrMsg = results[0].status === 'rejected'
@@ -472,6 +560,9 @@ ${recentErrors ? JSON.stringify(recentErrors, null, 2) : '조회 불가 (fetch_r
 
 ## 회원 현황
 유료 ${members.paid}명 / 체험 ${members.trial}명
+
+## CEO 현재 지시 사항 (갭 감지 시 최우선 반영)
+${(activeDirectives ?? []).filter(d => d.status === 'in_progress').map(d => `- ${d.title}: ${(d.plan ?? '계획 수립 중').slice(0, 80)}`).join('\n') || '없음'}
 
 ## GitHub Actions 실행 통계
 ${workflowStats ? JSON.stringify(workflowStats, null, 2) : '데이터 없음'}
@@ -563,6 +654,12 @@ ${workflowStats ? JSON.stringify(workflowStats, null, 2) : '데이터 없음'}
           action_required: 'PR 리뷰 또는 외부 도구/API 도입 검토 필요',
         });
       }
+    }
+
+    // ── 2d. CEO 지시 처리 (계획 수립 or 진행상황 업데이트) ─────────────
+    const directiveResult = await processCeoDirectives(activeDirectives ?? [], auditData, members);
+    if (directiveResult) {
+      console.log(`  → CEO 지시 처리: ${directiveResult}`);
     }
 
     // ── 3. 월요일 첫 사이클: 전체 주간 분석 ────────────────────────────

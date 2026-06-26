@@ -30,6 +30,21 @@ const BENEFIT_RULES = {
 const CAFE24_API_BASE = process.env.CAFE24_API_URL.replace('/report.php', '');
 const CAFE24_API_KEY  = process.env.CAFE24_API_KEY;
 
+async function fetchMyDirectiveInstructions() {
+  try {
+    const res = await fetch(
+      `${CAFE24_API_BASE}/api/get_active_directives.php?department=chm`,
+      { headers: { 'X-Api-Key': CAFE24_API_KEY } },
+    );
+    if (!res.ok) return '';
+    const list = await res.json();
+    return list
+      .filter(d => d.my_instruction)
+      .map(d => `[CEO 지시] ${d.title}: ${d.my_instruction}`)
+      .join('\n');
+  } catch { return ''; }
+}
+
 /**
  * 회원 데이터 전체 조회 - jblogzy API (유료 + 체험 분리)
  */
@@ -201,7 +216,7 @@ JSON 형식으로 출력:
  * 리텐션 이메일 초안 생성
  * 혜택 수치는 BENEFIT_RULES에서 주입 — Claude가 임의로 생성하지 않음
  */
-async function generateRetentionEmail(member, riskData) {
+async function generateRetentionEmail(member, riskData, directiveContext) {
   const riskLevel = riskData.score >= 70 ? 'HIGH' : riskData.score >= 40 ? 'MEDIUM' : 'LOW';
   const benefit   = BENEFIT_RULES[riskLevel] ?? null;
 
@@ -235,7 +250,7 @@ async function generateRetentionEmail(member, riskData) {
   const ctx = emailContext[riskLevel];
 
   const prompt = `당신은 jblogzy.com 고객관리팀 담당자입니다.
-
+${directiveContext ? `\n[CEO 지시 사항 — 최우선 반영]\n${directiveContext}\n` : ''}
 아래 회원에게 보낼 리텐션 이메일을 작성해주세요.
 
 [회원 정보]
@@ -304,6 +319,9 @@ export async function run() {
   const autoApprove = await isChmAutoApproveEnabled();
   if (autoApprove) console.log('  → 자동 승인 모드 ON');
 
+  const directiveContext = await fetchMyDirectiveInstructions();
+  if (directiveContext) console.log(`  → CEO 지시 반영: ${directiveContext.slice(0, 80)}`);
+
   await send({ department: DEPARTMENT, task_type: '회원 데이터 조회', status: 'running',
     summary: '회원 데이터 조회 중...' });
 
@@ -363,7 +381,7 @@ export async function run() {
         }
       }
 
-      const emailData = await generateRetentionEmail(member, riskData);
+      const emailData = await generateRetentionEmail(member, riskData, directiveContext);
       const { subject, body, benefit } = emailData;
 
       console.log(`  ${badge} ${member.name} - 이탈 위험도 ${riskData.score}점 (${RISK_LEVELS[riskLevel].label})`);

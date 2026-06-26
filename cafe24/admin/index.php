@@ -90,6 +90,16 @@ try {
         $ceoPending = $stmtCeo->fetchAll();
     } catch (PDOException $e2) { /* 테이블 없으면 빈 배열 */ }
 
+    // CEO 지시
+    $directives = [];
+    try {
+        $stmtDir = $pdo->query("SELECT id, title, description, status, plan, progress_notes, created_at
+            FROM ceo_directives
+            WHERE status IN ('open','planning','in_progress')
+            ORDER BY created_at DESC LIMIT 10");
+        $directives = $stmtDir->fetchAll();
+    } catch (PDOException $e3) { /* 테이블 없으면 빈 배열 */ }
+
 } catch (PDOException $e) {
     $dbError = $e->getMessage();
 }
@@ -205,6 +215,84 @@ function timeAgo(string $datetime): string {
   </div>
   <?php endif; ?>
 
+  <!-- CEO 지시 섹션 -->
+  <div class="mb-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <h5 class="fw-bold d-flex align-items-center gap-2">
+        <span>📋</span> CEO 지시
+        <?php if (!empty($directives)): ?>
+          <span class="badge bg-primary"><?= count($directives) ?></span>
+        <?php endif; ?>
+      </h5>
+      <button class="btn btn-sm btn-outline-primary" onclick="toggleDirectiveForm()">+ 새 지시 등록</button>
+    </div>
+
+    <!-- 새 지시 입력 폼 (기본 숨김) -->
+    <div id="directive-form" style="display:none" class="feed-container mb-3 p-3">
+      <h6 class="mb-3 fw-bold">새 CEO 지시 등록</h6>
+      <div class="mb-2">
+        <input type="text" id="dir-title" class="form-control form-control-sm"
+               placeholder="지시 제목 (예: 이번 주 뷰티 업종 집중 공략)"
+               style="background:#0f172a;border-color:#475569;color:#e2e8f0">
+      </div>
+      <div class="mb-2">
+        <textarea id="dir-body" class="form-control form-control-sm" rows="3"
+                  placeholder="세부 내용 (선택 — 없으면 전략기획팀이 구체화)"
+                  style="background:#0f172a;border-color:#475569;color:#e2e8f0;resize:vertical"></textarea>
+      </div>
+      <div class="mb-3">
+        <div class="small text-muted mb-1">대상 부서 (선택 안 하면 전 부서 — 전략기획팀이 판단)</div>
+        <div class="d-flex gap-3">
+          <?php foreach(['sales'=>'영업팀','marketing'=>'마케팅팀','chm'=>'고객관리팀'] as $k=>$n): ?>
+          <label class="small d-flex align-items-center gap-1" style="cursor:pointer">
+            <input type="checkbox" class="dir-dept" value="<?= $k ?>"> <?= $n ?>
+          </label>
+          <?php endforeach; ?>
+        </div>
+      </div>
+      <button class="btn btn-sm btn-primary" onclick="submitDirective()">지시 등록</button>
+      <button class="btn btn-sm btn-outline-secondary ms-2" onclick="toggleDirectiveForm()">취소</button>
+    </div>
+
+    <!-- 활성 지시 목록 -->
+    <?php if (empty($directives)): ?>
+      <div class="small text-muted feed-container p-3">진행 중인 CEO 지시가 없습니다. "새 지시 등록" 버튼으로 지시를 입력하면 전략기획팀이 다음 사이클(최대 30분)에 실행 계획을 수립하고 각 부서에 반영합니다.</div>
+    <?php else: ?>
+      <?php
+        $statusColors = ['open'=>'#64748b','planning'=>'#fbbf24','in_progress'=>'#3b82f6','completed'=>'#4ade80'];
+        $statusLabels = ['open'=>'대기','planning'=>'계획 중','in_progress'=>'진행 중','completed'=>'완료'];
+      ?>
+      <?php foreach ($directives as $dir): ?>
+        <?php $sc = $statusColors[$dir['status']] ?? '#64748b'; $sl = $statusLabels[$dir['status']] ?? $dir['status']; ?>
+        <div class="feed-container mb-2 p-3" id="directive-<?= (int)$dir['id'] ?>">
+          <div class="d-flex justify-content-between align-items-start">
+            <div class="flex-grow-1">
+              <span class="badge me-2" style="background:<?= $sc ?>"><?= $sl ?></span>
+              <span class="small fw-semibold"><?= htmlspecialchars($dir['title']) ?></span>
+              <?php if (!empty($dir['plan'])): ?>
+              <div class="small text-muted mt-1">
+                📋 <?= htmlspecialchars(mb_strimwidth($dir['plan'], 0, 150, '...')) ?>
+              </div>
+              <?php endif; ?>
+              <?php if (!empty($dir['progress_notes'])): ?>
+              <div class="small mt-1" style="color:#93c5fd">
+                🔄 <?= htmlspecialchars(mb_strimwidth(trim($dir['progress_notes']), 0, 150, '...')) ?>
+              </div>
+              <?php endif; ?>
+            </div>
+            <div class="d-flex flex-column align-items-end gap-1 ms-3 flex-shrink-0">
+              <span class="small text-muted text-nowrap"><?= timeAgo($dir['created_at']) ?></span>
+              <?php if ($dir['status'] !== 'completed'): ?>
+              <button class="btn btn-sm btn-outline-success py-0"
+                onclick="completeDirective(<?= (int)$dir['id'] ?>, this)">완료</button>
+              <?php endif; ?>
+            </div>
+          </div>
+        </div>
+      <?php endforeach; ?>
+    <?php endif; ?>
+  </div>
+
   <!-- 부서별 상태 카드 -->
   <div class="row g-3 mb-4">
     <?php foreach ($departments as $key => $dept): ?>
@@ -295,6 +383,59 @@ function timeAgo(string $datetime): string {
 
 <script src="assets/dashboard.js"></script>
 <script>
+const API_BASE = '<?= htmlspecialchars(rtrim(str_replace('/admin', '', (isset($_SERVER['HTTPS']) ? 'https' : 'http') . '://' . $_SERVER['HTTP_HOST'] . dirname(dirname($_SERVER['REQUEST_URI']))), '/')) ?>/api';
+
+function toggleDirectiveForm() {
+  const f = document.getElementById('directive-form');
+  f.style.display = f.style.display === 'none' ? 'block' : 'none';
+  if (f.style.display === 'block') document.getElementById('dir-title').focus();
+}
+
+async function submitDirective() {
+  const title = document.getElementById('dir-title').value.trim();
+  const body  = document.getElementById('dir-body').value.trim();
+  const depts = [...document.querySelectorAll('.dir-dept:checked')].map(c => c.value);
+  if (!title) { alert('지시 제목을 입력해주세요'); return; }
+
+  try {
+    const res  = await fetch(API_BASE + '/submit_ceo_directive.php', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ title, description: body, target_departments: depts.length ? depts : null }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      location.reload();
+    } else {
+      alert('등록 실패: ' + (data.error ?? '알 수 없는 오류'));
+    }
+  } catch (e) {
+    alert('네트워크 오류: ' + e.message);
+  }
+}
+
+async function completeDirective(id, btn) {
+  if (!confirm('이 지시를 완료 처리할까요?')) return;
+  btn.disabled = true;
+  try {
+    const res  = await fetch(API_BASE + '/update_directive.php', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ id, status: 'completed', completed_at: new Date().toISOString().slice(0, 10) }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      document.getElementById('directive-' + id)?.remove();
+    } else {
+      btn.disabled = false;
+      alert('처리 실패: ' + (data.error ?? '오류'));
+    }
+  } catch (e) {
+    btn.disabled = false;
+    alert('네트워크 오류');
+  }
+}
+
 async function resolveCeoRequest(id, btn) {
   btn.disabled = true;
   try {

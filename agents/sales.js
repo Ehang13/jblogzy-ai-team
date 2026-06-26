@@ -6,8 +6,25 @@ import { ask, askFast } from '../core/claude.js';
 import { send, notifyStart, notifyError } from '../core/reporter.js';
 import { chromium } from 'playwright';
 
-const DEPARTMENT = 'sales';
+const DEPARTMENT      = 'sales';
 const INDUSTRIES_PER_RUN = 3;
+const CAFE24_API_BASE = process.env.CAFE24_API_URL?.replace('/report.php', '');
+const CAFE24_API_KEY  = process.env.CAFE24_API_KEY;
+
+async function fetchMyDirectiveInstructions() {
+  try {
+    const res = await fetch(
+      `${CAFE24_API_BASE}/api/get_active_directives.php?department=sales`,
+      { headers: { 'X-Api-Key': CAFE24_API_KEY } },
+    );
+    if (!res.ok) return '';
+    const list = await res.json();
+    return list
+      .filter(d => d.my_instruction)
+      .map(d => `[CEO 지시] ${d.title}: ${d.my_instruction}`)
+      .join('\n');
+  } catch { return ''; }
+}
 
 // ─────────────────────────────────────────────
 // 전체 업종 리스트 (15개)
@@ -290,10 +307,10 @@ async function discoverLeads(browser, industry, region) {
 // ─────────────────────────────────────────────
 // 업종·지역 맞춤 제안 이메일 생성
 // ─────────────────────────────────────────────
-async function generateProposalEmail(industry, lead, region) {
+async function generateProposalEmail(industry, lead, region, directiveContext) {
   const prompt = `당신은 jblogzy.com 영업팀 담당자입니다.
 jblogzy는 자영업자들이 AI로 5분 만에 네이버 블로그 포스팅을 완성할 수 있는 서비스입니다.
-
+${directiveContext ? `\n[CEO 지시 사항 — 최우선 반영]\n${directiveContext}\n` : ''}
 [대상]
 - 업체명: ${lead.businessName}
 - 업종: ${industry.name}
@@ -341,14 +358,14 @@ function parseEmailDraft(raw) {
 // ─────────────────────────────────────────────
 // 1개 동 × N개 업종 크롤링 후 리드 저장
 // ─────────────────────────────────────────────
-async function crawlAndReport(browser, region, industries, autoApprove) {
+async function crawlAndReport(browser, region, industries, autoApprove, directiveContext) {
   let cycleLeads = 0;
   for (const industry of industries) {
     console.log(`  → [${industry.name}] 리드 발굴 중...`);
     try {
       const leads = await discoverLeads(browser, industry, region);
       for (const lead of leads) {
-        const rawEmail = await generateProposalEmail(industry, lead, region);
+        const rawEmail = await generateProposalEmail(industry, lead, region, directiveContext);
         const { subject, body } = parseEmailDraft(rawEmail);
 
         for (const [emailDomain, emailStatus] of [['naver.com', 'pending'], ['gmail.com', 'guess']]) {
@@ -417,6 +434,9 @@ export async function run() {
   const browser  = await chromium.launch({ headless: true });
 
   try {
+    const directiveContext = await fetchMyDirectiveInstructions();
+    if (directiveContext) console.log(`  → CEO 지시 반영: ${directiveContext.slice(0, 80)}`);
+
     while (Date.now() < deadline) {
       const autoApprove = await isSalesAutoApproveEnabled(); // 매 사이클마다 재조회 (런타임 설정 변경 즉시 반영)
       console.log(`  자동 승인: ${autoApprove ? 'ON' : 'OFF'}`);
@@ -433,7 +453,7 @@ export async function run() {
         department: DEPARTMENT, task_type: '리드 발굴', status: 'running',
         summary: `[사이클 ${cycle + 1}] ${region} / ${industries.map(i => i.name).join(', ')} 크롤링 중...`,
       });
-      const cycleLeads = await crawlAndReport(browser, region, industries, autoApprove);
+      const cycleLeads = await crawlAndReport(browser, region, industries, autoApprove, directiveContext);
       totalLeads += cycleLeads;
 
       await send({

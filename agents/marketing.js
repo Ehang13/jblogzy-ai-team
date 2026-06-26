@@ -23,6 +23,21 @@ async function isMarketingAutoApproveEnabled() {
   }
 }
 
+async function fetchMyDirectiveInstructions() {
+  try {
+    const res = await fetch(
+      `${CAFE24_API_BASE}/api/get_active_directives.php?department=marketing`,
+      { headers: { 'X-Api-Key': CAFE24_API_KEY } },
+    );
+    if (!res.ok) return '';
+    const list = await res.json();
+    return list
+      .filter(d => d.my_instruction)
+      .map(d => `[CEO 지시] ${d.title}: ${d.my_instruction}`)
+      .join('\n');
+  } catch { return ''; }
+}
+
 // sales.js와 동일한 18개 업종 (날짜 기반 3개 순환)
 const SECTORS = [
   { name: '외식업 (맛집/카페)',            keywords: ['맛집 블로그', '카페 인테리어', '메뉴 소개'] },
@@ -57,10 +72,10 @@ function getTodaySectors() {
   return [0, 1, 2].map(i => SECTORS[(day * 3 + i) % SECTORS.length]);
 }
 
-async function generateBlogPost(sector) {
+async function generateBlogPost(sector, directiveContext) {
   const prompt = `당신은 jblogzy.com의 공식 마케팅 블로그 필진입니다.
 jblogzy는 자영업자들이 AI로 5분 만에 고품질 네이버 블로그 포스팅을 만들 수 있도록 돕는 SaaS입니다.
-
+${directiveContext ? `\n[CEO 지시 사항 — 최우선 반영]\n${directiveContext}\n` : ''}
 아래 업종의 자영업자를 위한 jblogzy 홍보 블로그 포스팅 초안을 작성해주세요.
 
 [대상 업종]
@@ -118,6 +133,9 @@ export async function run() {
   const autoApprove = await isMarketingAutoApproveEnabled();
   if (autoApprove) console.log('  → 자동 승인 모드 ON');
 
+  const directiveContext = await fetchMyDirectiveInstructions();
+  if (directiveContext) console.log(`  → CEO 지시 반영: ${directiveContext.slice(0, 80)}`);
+
   await notifyStart(DEPARTMENT, '일일 콘텐츠 생성');
 
   for (const sector of todaySectors) {
@@ -126,7 +144,7 @@ export async function run() {
       summary: `[${sector.name}] 블로그 포스팅 + SNS 캡션 생성 중...` });
     try {
       const [blogPost, snsCaption, imagePrompt] = await Promise.all([
-        generateBlogPost(sector),
+        generateBlogPost(sector, directiveContext),
         generateSnsCaption(sector),
         generateImagePrompt(sector),
       ]);
