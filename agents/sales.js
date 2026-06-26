@@ -1,6 +1,5 @@
-// 영업팀 에이전트 - 매일 오전 9시 실행
-// 네이버 플레이스에서 업체 블로그 ID 수집 → 이메일 후보 생성 → 제안 이메일 초안 생성
-// 3개 업종 × 1개 지역 조합으로 매일 자동 순환 (24시간 무인 운영)
+// 영업팀 에이전트 - 24/7 연속 수집 (sales.yml: 6시간 루프 × 4회/일)
+// 네이버 플레이스에서 동 단위로 업체 크롤링 → 블로그 있는 전체 업체 리드 수집
 
 import 'dotenv/config';
 import { ask, askFast } from '../core/claude.js';
@@ -35,19 +34,88 @@ export const ALL_INDUSTRIES = [
 ];
 
 // ─────────────────────────────────────────────
-// 전국 구/동 단위 지역 리스트 (40개+)
+// 전국 동 단위 지역 리스트 (~300개)
 // ─────────────────────────────────────────────
 export const ALL_REGIONS = [
-  '서울 강남구', '서울 서초구', '서울 마포구', '서울 강서구', '서울 송파구',
-  '서울 관악구', '서울 강동구', '서울 영등포구', '서울 중구', '서울 종로구',
-  '서울 노원구', '서울 은평구',
-  '부산 해운대구', '부산 부산진구', '부산 동래구', '부산 남구', '부산 북구', '부산 사상구',
-  '대구 달서구', '대구 수성구', '대구 중구', '대구 동구',
-  '인천 남동구', '인천 부평구', '인천 미추홀구', '인천 연수구',
-  '광주 서구', '광주 북구', '광주 남구',
-  '대전 서구', '대전 유성구', '대전 중구',
-  '수원시', '성남시 분당구', '고양시 일산', '안양시', '부천시', '용인시',
-  '창원시', '청주시', '전주시', '제주시',
+  // 서울 강남·서초
+  '역삼동', '삼성동', '청담동', '논현동', '신사동', '압구정동', '개포동', '대치동', '도곡동', '수서동',
+  '서초동', '반포동', '방배동', '잠원동', '양재동',
+  // 서울 송파·강동
+  '잠실동', '가락동', '문정동', '방이동', '오금동', '거여동', '마천동',
+  '천호동', '성내동', '길동', '둔촌동', '강일동', '명일동', '암사동',
+  // 서울 마포·용산
+  '합정동', '망원동', '연남동', '서교동', '상수동', '공덕동', '아현동', '대흥동', '성산동',
+  '이태원동', '한남동', '이촌동', '원효로동', '청파동', '후암동',
+  // 서울 영등포·구로·금천
+  '여의도동', '당산동', '문래동', '양평동', '신길동', '대림동', '영등포동',
+  '구로동', '신도림동', '고척동', '개봉동',
+  '시흥동', '독산동', '가산동',
+  // 서울 중구·종로
+  '명동', '충무로', '을지로', '남대문로', '회현동', '신당동', '황학동',
+  '종로', '삼청동', '인사동', '창신동', '숭인동', '혜화동', '평창동',
+  // 서울 성동·광진
+  '성수동', '왕십리동', '행당동', '응봉동', '금호동', '옥수동',
+  '구의동', '자양동', '중곡동', '광장동', '화양동', '군자동',
+  // 서울 동대문·중랑·성북
+  '휘경동', '회기동', '용두동', '신설동', '제기동', '전농동',
+  '면목동', '상봉동', '중화동', '묵동',
+  '정릉동', '길음동', '석관동', '동선동', '안암동', '하월곡동', '종암동',
+  // 서울 강북·도봉·노원
+  '수유동', '미아동', '번동', '우이동',
+  '쌍문동', '창동', '방학동', '도봉동',
+  '상계동', '중계동', '하계동', '공릉동', '월계동',
+  // 서울 은평·서대문·강서·양천
+  '불광동', '갈현동', '응암동', '녹번동', '역촌동',
+  '홍은동', '홍제동', '남가좌동', '북가좌동', '연희동',
+  '화곡동', '가양동', '등촌동', '마곡동', '방화동',
+  '목동', '신정동', '신월동',
+  // 서울 동작·관악
+  '노량진동', '상도동', '사당동', '대방동', '신대방동',
+  '신림동', '봉천동', '낙성대동', '관악동',
+  // 부산
+  '해운대동', '중동', '우동', '좌동', '반여동', '재송동', '송정동',
+  '부전동', '전포동', '범전동', '양정동', '거제동', '가야동', '개금동',
+  '대연동', '용호동', '문현동', '감만동', '우암동',
+  '동래동', '온천동', '명장동', '사직동', '수안동',
+  '연산동', '연제동',
+  '광안동', '남천동', '수영동', '민락동',
+  '당리동', '괴정동', '하단동', '감천동',
+  '화명동', '금곡동', '구포동', '덕천동',
+  '기장읍', '정관읍',
+  // 대구
+  '성당동', '용산동', '본리동', '월성동', '감삼동', '두류동', '진천동',
+  '범어동', '수성동', '만촌동', '황금동', '두산동', '지산동',
+  '동인동', '삼덕동', '남산동', '대봉동',
+  '신천동', '효목동', '방촌동',
+  '내당동', '비산동',
+  // 인천
+  '구월동', '간석동', '만수동', '논현동', '서창동',
+  '부평동', '삼산동', '갈산동', '십정동', '청천동',
+  '연수동', '송도동', '청학동', '동춘동',
+  '주안동', '용현동', '학익동', '도화동',
+  '가정동', '신현동', '검단동',
+  // 광주
+  '치평동', '화정동', '농성동', '쌍촌동', '유덕동',
+  '운암동', '문흥동', '두암동', '신안동', '중흥동',
+  '봉선동', '월산동', '주월동', '효천동',
+  '충장로', '계림동', '산수동',
+  // 대전
+  '둔산동', '탄방동', '월평동', '괴정동', '도마동', '관저동',
+  '봉명동', '궁동', '노은동', '관평동', '학하동', '반석동',
+  '은행동', '대흥동', '선화동', '목동',
+  // 수도권
+  '인계동', '영통동', '세류동', '정자동', '매탄동',
+  '야탑동', '서현동', '이매동', '신흥동',
+  '마두동', '장항동', '주엽동', '백석동', '화정동',
+  '평촌동', '비산동', '호계동',
+  '중동', '상동', '역곡동',
+  '풍덕천동', '신갈동', '기흥동', '구성동',
+  '동탄동', '능동', '반월동',
+  // 기타 주요 도시
+  '의창동', '상남동', '합성동', '봉곡동',
+  '복대동', '가경동', '분평동', '성화동',
+  '효자동', '진북동', '완산동', '인후동',
+  '연동', '노형동', '이도동', '삼도동',
 ];
 
 // ─────────────────────────────────────────────
@@ -64,29 +132,6 @@ async function isSalesAutoApproveEnabled() {
   } catch { return false; }
 }
 
-// ─────────────────────────────────────────────
-// 날짜 기반 결정론적 순환 (파일 불필요 → GitHub Actions 호환)
-// ─────────────────────────────────────────────
-function pickTodaysIndustries() {
-  // 실행마다 3개 업종 순환 → 하루 5회 × 3업종 = 2일이면 전 업종 커버
-  const kst      = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
-  const start    = new Date(kst.getFullYear(), 0, 0);
-  const daySlot  = Math.floor((kst - start) / 86400000);
-  const hourSlot = Math.floor(kst.getHours() / 3);
-  const totalSlots = Math.ceil(ALL_INDUSTRIES.length / INDUSTRIES_PER_RUN);
-  const slot     = (daySlot * 8 + hourSlot) % totalSlots;
-  return ALL_INDUSTRIES.slice(slot * INDUSTRIES_PER_RUN, (slot + 1) * INDUSTRIES_PER_RUN);
-}
-
-function pickTodaysRegion() {
-  // 날짜(연중 일수) × 8 + 3시간 단위 슬롯 → 실행마다 다른 지역 순환
-  // KST 08시→슬롯2, 09시→슬롯3, 12시→슬롯4, 16시→슬롯5, 20시→슬롯6
-  const kst     = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
-  const start   = new Date(kst.getFullYear(), 0, 0);
-  const daySlot = Math.floor((kst - start) / 86400000);
-  const hourSlot = Math.floor(kst.getHours() / 3);
-  return ALL_REGIONS[(daySlot * 8 + hourSlot) % ALL_REGIONS.length];
-}
 
 // ─────────────────────────────────────────────
 // map.naver.com 검색 + API 인터셉트로 place ID 수집
@@ -294,88 +339,106 @@ function parseEmailDraft(raw) {
 }
 
 // ─────────────────────────────────────────────
-// 메인 실행
+// 1개 동 × N개 업종 크롤링 후 리드 저장
+// ─────────────────────────────────────────────
+async function crawlAndReport(browser, region, industries, autoApprove) {
+  let cycleLeads = 0;
+  for (const industry of industries) {
+    console.log(`  → [${industry.name}] 리드 발굴 중...`);
+    try {
+      const leads = await discoverLeads(browser, industry, region);
+      for (const lead of leads) {
+        const rawEmail = await generateProposalEmail(industry, lead, region);
+        const { subject, body } = parseEmailDraft(rawEmail);
+
+        for (const [emailDomain, emailStatus] of [['naver.com', 'pending'], ['gmail.com', 'guess']]) {
+          const email = `${lead.blogId}@${emailDomain}`;
+          await send({
+            department:        DEPARTMENT,
+            task_type:         '리드 발굴',
+            status:            'completed',
+            summary:           `[${industry.name}][${region}] ${lead.businessName} 리드 발굴 (${email})`,
+            lead_industry:     industry.name,
+            lead_platform:     'naver_place',
+            lead_contact:      email,
+            lead_contact_type: 'email',
+            lead_email_status: autoApprove ? 'approved' : emailStatus,
+            lead_source_url:   lead.placeUrl,
+            lead_email_subject: subject,
+            lead_email_body:   body,
+          });
+          cycleLeads++;
+        }
+        if (lead.mobile) {
+          await send({
+            department:        DEPARTMENT,
+            task_type:         '리드 발굴',
+            status:            'completed',
+            summary:           `[${industry.name}][${region}] ${lead.businessName} 전화 리드 (${lead.mobile})`,
+            lead_industry:     industry.name,
+            lead_platform:     'naver_place',
+            lead_contact:      lead.mobile,
+            lead_contact_type: 'phone',
+            lead_source_url:   lead.placeUrl,
+          });
+        }
+        await new Promise(r => setTimeout(r, 500));
+      }
+      console.log(`  ✅ [${industry.name}] ${leads.length}개 업체 완료`);
+    } catch (err) {
+      console.error(`  ❌ [${industry.name}] 오류:`, err.message);
+      await notifyError(DEPARTMENT, `리드 발굴 (${industry.name})`, err);
+    }
+    await new Promise(r => setTimeout(r, 2000));
+  }
+  return cycleLeads;
+}
+
+// ─────────────────────────────────────────────
+// 메인 실행 (시간 제한 루프)
 // ─────────────────────────────────────────────
 export async function run() {
-  console.log('\n📊 [영업팀] 잠재 고객 발굴 시작 (네이버 플레이스 실제 크롤링)');
+  console.log('\n📊 [영업팀] 리드 발굴 시작 (네이버 플레이스 크롤링)');
 
   if (!process.env.NAVER_CLIENT_ID || !process.env.NAVER_CLIENT_SECRET) {
     await notifyError(DEPARTMENT, '환경변수 누락', new Error('NAVER_CLIENT_ID / NAVER_CLIENT_SECRET 가 .env에 없습니다'));
     return;
   }
 
-  await notifyStart(DEPARTMENT, '일일 리드 발굴');
-
+  await notifyStart(DEPARTMENT, '리드 발굴');
   const autoApprove = await isSalesAutoApproveEnabled();
   console.log(`  자동 승인: ${autoApprove ? 'ON' : 'OFF'}`);
 
-  const todaysIndustries = pickTodaysIndustries();
-  const todaysRegion     = pickTodaysRegion();
+  // SALES_LONG_RUN=true(sales.yml): 5.5시간 루프 / 없으면 1.3시간(morning-bundle 안전 마진)
+  const IS_LONG_RUN = !!process.env.SALES_LONG_RUN;
+  const deadline    = Date.now() + (IS_LONG_RUN ? 5.5 : 1.3) * 60 * 60 * 1000;
+  const GROUPS      = Math.ceil(ALL_INDUSTRIES.length / INDUSTRIES_PER_RUN);
 
-  console.log(`  오늘 지역: ${todaysRegion}`);
-  console.log(`  오늘 업종: ${todaysIndustries.map(i => i.name).join(', ')}`);
-
-  // Playwright 브라우저 1회 생성 후 전 업종 공유 (성능 최적화)
-  const browser = await chromium.launch({ headless: true });
+  let cycle      = 0;
   let totalLeads = 0;
+  const browser  = await chromium.launch({ headless: true });
 
   try {
-    for (const industry of todaysIndustries) {
-      console.log(`\n  → [${industry.name}] 리드 발굴 중...`);
-      try {
-        const leads = await discoverLeads(browser, industry, todaysRegion);
+    while (Date.now() < deadline) {
+      const region     = ALL_REGIONS[cycle % ALL_REGIONS.length];
+      const groupIdx   = cycle % GROUPS;
+      const industries = ALL_INDUSTRIES.slice(
+        groupIdx * INDUSTRIES_PER_RUN,
+        (groupIdx + 1) * INDUSTRIES_PER_RUN,
+      );
 
-        for (const lead of leads) {
-          const rawEmail = await generateProposalEmail(industry, lead, todaysRegion);
-          const { subject, body } = parseEmailDraft(rawEmail);
+      console.log(`\n[사이클 ${cycle + 1}] ${region} / ${industries.map(i => i.name).join(', ')}`);
+      const cycleLeads = await crawlAndReport(browser, region, industries, autoApprove);
+      totalLeads += cycleLeads;
 
-          // naver.com → pending (계정 존재 확실), gmail.com → guess (추정 주소)
-          // 자동승인 ON 이면 두 주소 모두 approved로 바로 저장
-          for (const [emailDomain, emailStatus] of [['naver.com', 'pending'], ['gmail.com', 'guess']]) {
-            const email = `${lead.blogId}@${emailDomain}`;
-            await send({
-              department:          DEPARTMENT,
-              task_type:           '리드 발굴',
-              status:              'completed',
-              summary:             `[${industry.name}][${todaysRegion}] ${lead.businessName} 리드 발굴 (${email})`,
-              lead_industry:       industry.name,
-              lead_platform:       'naver_place',
-              lead_contact:        email,
-              lead_contact_type:   'email',
-              lead_email_status:   autoApprove ? 'approved' : emailStatus,
-              lead_source_url:     lead.placeUrl,
-              lead_email_subject:  subject,
-              lead_email_body:     body,
-            });
-            totalLeads++;
-          }
+      await send({
+        department: DEPARTMENT,
+        task_type:  '사이클 완료',
+        status:     'completed',
+        summary:    `[사이클 ${cycle + 1}] ${region} (${industries.map(i => i.name).join(', ')}) ${cycleLeads}개 리드 수집`,
+      });
 
-          // 모바일 전화번호가 있으면 별도 리드로 저장
-          if (lead.mobile) {
-            await send({
-              department:        DEPARTMENT,
-              task_type:         '리드 발굴',
-              status:            'completed',
-              summary:           `[${industry.name}][${todaysRegion}] ${lead.businessName} 전화 리드 (${lead.mobile})`,
-              lead_industry:     industry.name,
-              lead_platform:     'naver_place',
-              lead_contact:      lead.mobile,
-              lead_contact_type: 'phone',
-              lead_source_url:   lead.placeUrl,
-            });
-          }
-
-          await new Promise(r => setTimeout(r, 500));
-        }
-
-        console.log(`  ✅ [${industry.name}] ${leads.length}개 업체 → ${leads.length * 2}개 이메일 리드 완료`);
-
-      } catch (err) {
-        console.error(`  ❌ [${industry.name}] 오류:`, err.message);
-        await notifyError(DEPARTMENT, `리드 발굴 (${industry.name})`, err);
-      }
-
-      await new Promise(r => setTimeout(r, 2000));
+      cycle++;
     }
   } finally {
     await browser.close();
@@ -383,12 +446,12 @@ export async function run() {
 
   await send({
     department: DEPARTMENT,
-    task_type:  '일일 영업 완료',
+    task_type:  '영업 세션 완료',
     status:     'completed',
-    summary:    `[${todaysRegion}] 오늘 총 ${totalLeads}개 리드 발굴 완료 (${todaysIndustries.map(i => i.name).join(', ')}). 대시보드에서 검토 후 발송 승인해주세요.`,
+    summary:    `총 ${cycle}개 사이클 완료, ${totalLeads}개 리드 수집. 대시보드에서 검토 후 발송 승인해주세요.`,
   });
 
-  console.log(`\n📊 [영업팀] 완료 - 총 ${totalLeads}개 리드\n`);
+  console.log(`\n📊 [영업팀] 완료 - ${cycle}개 사이클, 총 ${totalLeads}개 리드\n`);
 }
 
 if (process.argv[1].endsWith('sales.js')) {

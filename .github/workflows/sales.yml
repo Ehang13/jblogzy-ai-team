@@ -2,10 +2,7 @@ name: 영업팀 - 리드 발굴
 
 on:
   schedule:
-    - cron: '0 23 * * *'   # 08:00 KST
-    - cron: '0 3 * * *'    # 12:00 KST
-    - cron: '0 7 * * *'    # 16:00 KST
-    - cron: '0 11 * * *'   # 20:00 KST
+    - cron: '0 */6 * * *'   # UTC 0,6,12,18 = KST 9,15,21,3 (하루 4회 × 5.5시간 루프 = 22시간 커버)
   workflow_dispatch:         # 수동 실행 버튼
 
 concurrency:
@@ -15,7 +12,7 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 360    # 6시간
 
     steps:
       - uses: actions/checkout@v4
@@ -31,9 +28,10 @@ jobs:
       - name: Playwright Chromium 설치
         run: npx playwright install chromium --with-deps
 
-      - name: 영업팀 실행
+      - name: 영업팀 실행 (5.5시간 루프)
         run: node agents/sales.js
         env:
+          SALES_LONG_RUN:     'true'
           ANTHROPIC_API_KEY:  ${{ secrets.ANTHROPIC_API_KEY }}
           CAFE24_API_URL:     ${{ secrets.CAFE24_API_URL }}
           CAFE24_API_KEY:     ${{ secrets.CAFE24_API_KEY }}
