@@ -188,13 +188,16 @@ async function requestRegenerate(contentId) {
 
 // 리드 발송 승인 처리 (leads.php에서 사용)
 async function approveLead(leadId) {
-  if (!confirm('이 리드에게 제안 이메일을 발송하시겠습니까?')) return;
+  const scheduleInput = document.getElementById(`schedule-${leadId}`);
+  const scheduledAt   = scheduleInput?.value || null;
+  const timeLabel     = scheduledAt ? new Date(scheduledAt).toLocaleString('ko-KR') : '즉시';
+  if (!confirm(`이 리드에게 제안 이메일을 발송 승인하시겠습니까?\n\n📨 발송 예정: ${timeLabel}`)) return;
 
   try {
     const res = await fetch('approve_lead.php', {
-      method: 'POST',
+      method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ lead_id: leadId }),
+      body:    JSON.stringify({ lead_id: leadId, scheduled_send_at: scheduledAt }),
     });
     const data = await res.json();
 
@@ -202,7 +205,23 @@ async function approveLead(leadId) {
       const row = document.getElementById(`lead-row-${leadId}`);
       if (row) {
         row.querySelector('.status-badge').outerHTML =
-          '<span class="badge bg-success">발송 승인</span>';
+          `<td class="status-badge"><span class="badge bg-info">승인됨</span></td>`;
+        const schedCell = scheduleInput?.closest('td');
+        if (schedCell && scheduledAt) {
+          schedCell.innerHTML = '';
+        }
+        // 발굴일 셀 업데이트: 발송 예정 표시
+        const cells = row.querySelectorAll('td');
+        const dateCellIdx = 6; // 발굴일 / 발송예정 컬럼 인덱스
+        if (cells[dateCellIdx] && scheduledAt) {
+          const d = new Date(scheduledAt);
+          const label = `${String(d.getMonth()+1).padStart(2,'0')}.${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+          const existing = cells[dateCellIdx].querySelector('div:first-child');
+          const sendDiv  = document.createElement('div');
+          sendDiv.style.cssText = 'color:#4ade80;margin-top:3px';
+          sendDiv.textContent   = '📨 ' + label;
+          cells[dateCellIdx].appendChild(sendDiv);
+        }
       }
     } else {
       alert('오류: ' + (data.error || '알 수 없는 오류'));

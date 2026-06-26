@@ -18,8 +18,14 @@ if (!$id) {
 
 try {
     $pdo  = getDbConnection();
-    $stmt = $pdo->prepare("UPDATE leads SET email_status = 'approved' WHERE id = ?");
-    $stmt->execute([$id]);
+    $scheduledAt = $data['scheduled_send_at'] ?? null;
+    if ($scheduledAt) {
+        $stmt = $pdo->prepare("UPDATE leads SET email_status='approved', scheduled_send_at=? WHERE id=?");
+        $stmt->execute([$scheduledAt, $id]);
+    } else {
+        $stmt = $pdo->prepare("UPDATE leads SET email_status='approved' WHERE id=?");
+        $stmt->execute([$id]);
+    }
     echo json_encode(['success' => true]);
 } catch (PDOException $e) {
     echo json_encode(['error' => $e->getMessage()]);

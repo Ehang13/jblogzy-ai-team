@@ -11,6 +11,9 @@ if (!isset($_SESSION['admin_logged_in'])) {
 
 $pdo = getDbConnection();
 
+// scheduled_send_at 컬럼 없으면 자동 추가
+try { $pdo->exec("ALTER TABLE leads ADD COLUMN scheduled_send_at DATETIME NULL"); } catch (PDOException $e) {}
+
 // 자동 승인 설정 조회
 $salesAutoApproveRow = $pdo->query("SELECT value FROM settings WHERE key_name = 'sales_auto_approve' LIMIT 1")->fetch();
 $salesAutoApprove = ($salesAutoApproveRow['value'] ?? '0') === '1';
@@ -43,6 +46,14 @@ if (($_GET['action'] ?? '') === 'csv') {
     fclose($out);
     exit;
 }
+
+// 기본 발송 예정 시각: 다음 영업일 09:00 KST
+$nowKst = new DateTime('now', new DateTimeZone('Asia/Seoul'));
+$defaultSend = clone $nowKst;
+if ((int)$defaultSend->format('H') >= 9) $defaultSend->modify('+1 day');
+while ((int)$defaultSend->format('N') >= 6) $defaultSend->modify('+1 day');
+$defaultSend->setTime(9, 0, 0);
+$defaultSendStr = $defaultSend->format('Y-m-d\TH:i'); // datetime-local 형식
 
 $filter = $_GET['filter'] ?? 'pending';
 $allowedFilters = ['pending', 'guess', 'approved', 'sent', 'replied', 'all'];
@@ -157,20 +168,32 @@ $industryColors = [
       <?php endforeach; ?>
     </div>
     <?php if ($filter === 'pending' && !empty($leads)): ?>
-    <button id="bulkApproveBtn" class="btn btn-sm btn-warning ms-2" onclick="bulkApproveLeads()">
-      ⚡ 전체 일괄 승인 (<?= $stats['pending_count'] ?>건)
-    </button>
+    <div class="d-flex align-items-center gap-2 ms-2">
+      <label class="small text-muted text-nowrap mb-0">발송 예정</label>
+      <input type="datetime-local" id="bulkScheduleTime"
+             value="<?= htmlspecialchars($defaultSendStr) ?>"
+             style="background:#1e293b;border:1px solid #475569;color:#e2e8f0;border-radius:6px;padding:2px 6px;font-size:.8rem;width:165px">
+      <button id="bulkApproveBtn" class="btn btn-sm btn-warning text-nowrap" onclick="bulkApproveLeads()">
+        ⚡ 전체 일괄 승인 (<?= $stats['pending_count'] ?>건)
+      </button>
+    </div>
     <?php endif; ?>
   </div>
 
   <script>
   async function bulkApproveLeads() {
-    if (!confirm('대기 중인 리드 전체를 승인하시겠습니까?')) return;
+    const scheduledAt = document.getElementById('bulkScheduleTime')?.value;
+    const timeLabel   = scheduledAt ? new Date(scheduledAt).toLocaleString('ko-KR') : '즉시';
+    if (!confirm(`대기 중인 리드 전체를 승인하시겠습니까?\n\n📨 발송 예정: ${timeLabel}`)) return;
     const btn = document.getElementById('bulkApproveBtn');
     btn.disabled = true;
     btn.textContent = '처리 중...';
     try {
-      const res  = await fetch('bulk_approve_leads.php', { method: 'POST' });
+      const res  = await fetch('bulk_approve_leads.php', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ scheduled_send_at: scheduledAt || null }),
+      });
       const data = await res.json();
       if (data.success) {
         alert(`${data.approved}건 승인 완료!`);
@@ -204,7 +227,7 @@ $industryColors = [
             <th>이메일 초안</th>
             <th>발굴 경로</th>
             <th>상태</th>
-            <th>발굴일</th>
+            <th>발굴일 / 발송 예정</th>
             <th>액션</th>
           </tr>
         </thead>
@@ -257,13 +280,27 @@ $industryColors = [
                 ?>
                 <span class="badge bg-<?= $color ?>"><?= $label ?></span>
               </td>
-              <td style="color:#94a3b8;font-size:.85rem"><?= $lead['created_at'] ? date('m.d', strtotime($lead['created_at'])) : '-' ?></td>
+              <td style="font-size:.8rem;min-width:120px">
+                <div style="color:#64748b"><?= $lead['created_at'] ? date('m.d H:i', strtotime($lead['created_at'])) : '-' ?></div>
+                <?php if (!empty($lead['scheduled_send_at'])): ?>
+                  <div style="color:#4ade80;margin-top:3px">
+                    📨 <?= date('m.d H:i', strtotime($lead['scheduled_send_at'])) ?>
+                  </div>
+                <?php elseif ($lead['email_status'] === 'approved'): ?>
+                  <div style="color:#fbbf24;margin-top:3px;font-size:.75rem">즉시 대기 중</div>
+                <?php endif; ?>
+              </td>
               <td>
                 <?php if ($lead['email_status'] === 'pending'): ?>
-                  <button onclick="approveLead(<?= $lead['id'] ?>)"
-                          class="btn btn-sm btn-success py-0">
-                    발송 승인
-                  </button>
+                  <div class="d-flex align-items-center gap-1">
+                    <input type="datetime-local" id="schedule-<?= $lead['id'] ?>"
+                           value="<?= htmlspecialchars($defaultSendStr) ?>"
+                           style="background:#1e293b;border:1px solid #475569;color:#e2e8f0;border-radius:4px;padding:1px 4px;font-size:.72rem;width:145px">
+                    <button onclick="approveLead(<?= $lead['id'] ?>)"
+                            class="btn btn-sm btn-success py-0 text-nowrap">
+                      발송 승인
+                    </button>
+                  </div>
                 <?php endif; ?>
               </td>
             </tr>
