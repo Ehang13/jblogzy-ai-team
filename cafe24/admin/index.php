@@ -82,6 +82,14 @@ try {
     $stmtTotal = $pdo->query('SELECT COUNT(*) FROM agent_tasks WHERE status = "completed"');
     $totalCompleted = (int)$stmtTotal->fetchColumn();
 
+    // CEO 인박스
+    $ceoPending = [];
+    try {
+        $stmtCeo = $pdo->query("SELECT * FROM ceo_inbox WHERE status='open'
+            ORDER BY FIELD(priority,'CRITICAL','HIGH','MEDIUM'), created_at DESC LIMIT 20");
+        $ceoPending = $stmtCeo->fetchAll();
+    } catch (PDOException $e2) { /* 테이블 없으면 빈 배열 */ }
+
 } catch (PDOException $e) {
     $dbError = $e->getMessage();
 }
@@ -166,6 +174,36 @@ function timeAgo(string $datetime): string {
       </div>
     </div>
   </div>
+
+  <!-- CEO 인박스 -->
+  <?php if (!empty($ceoPending)): ?>
+  <div class="mb-4">
+    <h5 class="fw-bold mb-3 d-flex align-items-center gap-2">
+      <span style="color:#f87171">⚠</span> CEO 인박스
+      <span class="badge bg-danger"><?= count($ceoPending) ?></span>
+    </h5>
+    <?php foreach ($ceoPending as $item): ?>
+      <?php $color = $item['priority'] === 'CRITICAL' ? '#f87171' : '#fb923c'; ?>
+      <div class="feed-container mb-2 p-3" style="border-left:3px solid <?= $color ?>">
+        <div class="d-flex justify-content-between align-items-start">
+          <div class="flex-grow-1">
+            <span class="badge me-2" style="background:<?= $color ?>"><?= htmlspecialchars($item['priority']) ?></span>
+            <span class="small fw-semibold"><?= htmlspecialchars($item['title']) ?></span>
+            <div class="small text-muted mt-1"><?= htmlspecialchars(mb_strimwidth($item['description'] ?? '', 0, 150, '...')) ?></div>
+            <?php if (!empty($item['action_required'])): ?>
+            <div class="small mt-1" style="color:#fbbf24">→ <?= htmlspecialchars($item['action_required']) ?></div>
+            <?php endif; ?>
+          </div>
+          <div class="d-flex flex-column align-items-end gap-1 ms-3 flex-shrink-0">
+            <span class="small text-muted text-nowrap"><?= timeAgo($item['created_at']) ?></span>
+            <button class="btn btn-sm btn-outline-success py-0"
+              onclick="resolveCeoRequest(<?= (int)$item['id'] ?>, this)">해결됨</button>
+          </div>
+        </div>
+      </div>
+    <?php endforeach; ?>
+  </div>
+  <?php endif; ?>
 
   <!-- 부서별 상태 카드 -->
   <div class="row g-3 mb-4">
@@ -256,5 +294,27 @@ function timeAgo(string $datetime): string {
 </div><!-- /container -->
 
 <script src="assets/dashboard.js"></script>
+<script>
+async function resolveCeoRequest(id, btn) {
+  btn.disabled = true;
+  try {
+    const res  = await fetch('resolve_ceo_request.php', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body:    `id=${id}`,
+    });
+    const data = await res.json();
+    if (data.success) {
+      btn.closest('.feed-container').remove();
+    } else {
+      btn.disabled = false;
+      alert('처리 실패: ' + (data.error ?? '알 수 없는 오류'));
+    }
+  } catch (e) {
+    btn.disabled = false;
+    alert('네트워크 오류');
+  }
+}
+</script>
 </body>
 </html>

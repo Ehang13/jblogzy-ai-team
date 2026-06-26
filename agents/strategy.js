@@ -132,6 +132,16 @@ async function setLastDevDate(dateStr) {
   } catch { /* ignore */ }
 }
 
+async function submitCeoRequest({ department, priority, title, description, action_required }) {
+  try {
+    await fetch(`${CAFE24_API_BASE}/api/submit_ceo_request.php`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Api-Key': CAFE24_API_KEY },
+      body:    JSON.stringify({ department, priority, title, description, action_required }),
+    });
+  } catch { /* ignore */ }
+}
+
 async function getSetting(key) {
   try {
     const res  = await fetch(`${CAFE24_API_BASE}/get_setting.php?key=${encodeURIComponent(key)}`, {
@@ -488,14 +498,23 @@ ${workflowStats ? JSON.stringify(workflowStats, null, 2) : '데이터 없음'}
     // ── 2a. 인프라 오류 → 관리자 이메일 즉시 발송 ─────────────────────
     if (hasInfraGap) {
       const prevHad = await getSetting('strategy_infra_gap_active');
-      if (prevHad !== 'true' && ADMIN_EMAIL) {
-        console.log('  → [HIGH-INFRA] 신규 감지: 관리자 이메일 발송');
-        await sendMail({
-          to:      ADMIN_EMAIL,
-          subject: '[AI팀 긴급] 인프라 오류 — 관리자 조치 필요',
-          html:    `<h2 style="color:#f87171">⚠️ 즉시 조치가 필요합니다</h2>${mdToHtml(gapScan)}`,
-          text:    `AI팀 인프라 오류 감지\n\n${gapScan}`,
-        }).catch(e => console.error('  → 이메일 발송 실패:', e.message));
+      if (prevHad !== 'true') {
+        console.log('  → [HIGH-INFRA] 신규 감지: 관리자 이메일 + CEO 인박스 등록');
+        if (ADMIN_EMAIL) {
+          await sendMail({
+            to:      ADMIN_EMAIL,
+            subject: '[AI팀 긴급] 인프라 오류 — 관리자 조치 필요',
+            html:    `<h2 style="color:#f87171">⚠️ 즉시 조치가 필요합니다</h2>${mdToHtml(gapScan)}`,
+            text:    `AI팀 인프라 오류 감지\n\n${gapScan}`,
+          }).catch(e => console.error('  → 이메일 발송 실패:', e.message));
+        }
+        await submitCeoRequest({
+          department:      DEPARTMENT,
+          priority:        'CRITICAL',
+          title:           '[인프라 오류] ' + gapScan.split('\n')[0].replace(/^\[HIGH-INFRA\]\s*/,'').slice(0, 80),
+          description:     gapScan,
+          action_required: '관리자 직접 조치 필요 — 상세 내용 확인 후 처리',
+        });
       }
       await setSetting('strategy_infra_gap_active', 'true');
     }
@@ -536,6 +555,13 @@ ${workflowStats ? JSON.stringify(workflowStats, null, 2) : '데이터 없음'}
         }
       } else {
         console.log('  → [HIGH-DEV] 탐지: 오늘 이미 PR 생성됨 (건너뜀)');
+        await submitCeoRequest({
+          department:      DEPARTMENT,
+          priority:        'HIGH',
+          title:           '[개발 갭] ' + gapScan.split('\n')[0].replace(/^\[HIGH-DEV\]\s*/,'').slice(0, 80),
+          description:     gapScan,
+          action_required: 'PR 리뷰 또는 외부 도구/API 도입 검토 필요',
+        });
       }
     }
 
