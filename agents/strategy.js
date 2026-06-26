@@ -5,7 +5,7 @@
 import 'dotenv/config';
 import { execSync }                   from 'child_process';
 import { writeFileSync }              from 'fs';
-import { ask, askJson }               from '../core/claude.js';
+import { ask, askFast, askJson }       from '../core/claude.js';
 import { send, notifyError }          from '../core/reporter.js';
 import { sendMail }                   from '../core/mailer.js';
 import { ALL_INDUSTRIES, ALL_REGIONS } from './sales.js';
@@ -43,34 +43,47 @@ const BUSINESS = {
 // ── AI 자동화 팀 설계 현황 ───────────────────────────────────────────────
 const AI_TEAM = {
   영업팀: {
-    역할: '네이버 플레이스에서 잠재 고객 발굴 → 이메일 초안 생성',
+    역할: '네이버 플레이스에서 동 단위 잠재 고객 발굴 → 이메일 초안 생성',
+    실행방식: '24/7 연속 루프 (6시간 잡 × 4회/일)',
+    동단위지역수: ALL_REGIONS.length,
+    실행당업종수: 3,
     총업종수: ALL_INDUSTRIES.length,
-    하루실행횟수: 5,
-    실행시각_KST: ['08:00(sales.yml)', '09:00(morning-bundle)', '12:00', '16:00', '20:00'],
-    실행당처리업종: ALL_INDUSTRIES.length,
-    업종당리드수: 5,
-    지역선택방식: '3시간 단위 슬롯 × 연중 일수 조합 → 실행마다 다른 지역 순환 (40개 지역)',
-    총지역수: ALL_REGIONS.length,
-    이메일유형: ['naver.com (pending)', 'gmail.com (guess — 추정 주소)'],
-    현재문제점: '이메일 발송 후 답장 여부·전환 여부 추적 불가',
+    현재상태: '정상 운영',
+    알려진갭: ['이메일 발송 후 답장·전환 추적 불가'],
   },
   마케팅팀: {
-    역할: '네이버 블로그에 jblogzy 홍보 포스팅 + SNS 캡션 생성',
-    하루실행횟수: 1,
-    실행당섹터수: 3,
-    총섹터수: 18,
-    현재문제점: '블로그 포스팅이 실제 검색 유입·가입 전환으로 이어지는지 측정 불가',
+    역할: '네이버 블로그 포스팅 + 인스타그램 콘텐츠 생성·업로드',
+    실행방식: '매일 1회 (morning-bundle 09:00 KST)',
+    네이버블로그: {
+      현재상태: '정상 운영',
+      제약: '계정당 하루 최대 3회 포스팅 (초과 시 네이버 스팸 처리)',
+      현재계정수: 1,
+      갭: '계정 1개로는 업종 커버리지 제한 → 추가 계정 필요 시 관리자에게 요청',
+    },
+    인스타그램: {
+      현재상태: '미구현 — 캡션 생성만 되고 실제 업로드 없음',
+      우선순위: 'HIGH',
+      필요작업: 'Instagram Graph API 또는 Playwright 자동화 구현',
+    },
+    알려진갭: [
+      '[HIGH] 인스타그램 실제 업로드 미구현 — content_queue에만 저장됨',
+      '[LOW] 블로그 계정 수 확장 필요 시 관리자 승인 요청',
+    ],
   },
   고객관리팀: {
-    역할: '유료 회원 이탈 방지 리텐션 이메일 생성·발송',
-    하루실행횟수: 1,
+    역할: '유료/체험 회원 이탈 방지·전환 이메일 생성 및 발송',
+    실행방식: '매일 1회 (morning-bundle 09:00 KST)',
+    발송제약: '평일 09:00~18:00 KST만 생성·발송 (야간 발송 시 고객 신뢰 하락)',
     위험도기준: { HIGH: '70점+', MEDIUM: '40~69점 + 만료 7일 이내', LOW: '미발송' },
     쿨다운: '30일',
-    현재문제점: '유료 구독자 0명 → 사실상 미운영 상태. 3일 무료 체험 만료 전 전환 유도 기능 없음',
+    현재상태: '업무시간 제한 적용 완료',
+    알려진갭: ['이메일 발송 성공·오픈율 추적 불가'],
   },
   전략기획팀: {
-    역할: '주간 시스템 전체 감사 + 목표 수립·추적 + 개선 제안',
-    실행주기: '매주 월요일 09:00',
+    역할: '전체 시스템 감사·목표 추적·갭 즉시 탐지·자율 코드 개발 PR',
+    실행방식: '24/7 연속 루프 (6시간 잡 × 4회/일)',
+    갭탐지시: '즉시 developFeature() 실행 → GitHub PR 생성 (하루 1회 제한)',
+    현재상태: '24/7 운영 중',
   },
 };
 
@@ -85,6 +98,27 @@ async function fetchActiveGoal() {
   } catch {
     return null;
   }
+}
+
+// ── 자율 개발 날짜 추적 (하루 1회 PR 제한) ──────────────────────────────
+async function getLastDevDate() {
+  try {
+    const res  = await fetch(`${CAFE24_API_BASE}/get_setting.php?key=strategy_last_dev_date`, {
+      headers: { 'X-Api-Key': CAFE24_API_KEY },
+    });
+    const data = await res.json();
+    return data.value ?? null;
+  } catch { return null; }
+}
+
+async function setLastDevDate(dateStr) {
+  try {
+    await fetch(`${CAFE24_API_BASE}/set_setting.php`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Api-Key': CAFE24_API_KEY },
+      body:    JSON.stringify({ key: 'strategy_last_dev_date', value: dateStr }),
+    });
+  } catch { /* ignore */ }
 }
 
 // ── jblogzy 회원 현황 조회 ───────────────────────────────────────────────
@@ -192,29 +226,30 @@ async function developFeature(weeklyReport) {
 
   // Step 1: Claude가 구현할 기능 1개 결정
   const plan = await askJson(`
-## 이번 주 전략 감사 결과
+## 탐지된 시스템 갭 / 전략 감사 결과
 ${weeklyReport}
 
 ## 이미 구현된 기능
 - 유료 회원 이탈 위험도 분석 + 리텐션 이메일 (agents/chm.js)
 - 3일 무료 체험 전환 이메일 D+1 온보딩, D+2 전환 유도 (agents/chm.js)
 - 네이버 플레이스 리드 발굴 + 이메일 초안 자동 생성 (agents/sales.js)
-- 마케팅 블로그 자동 포스팅 + SNS 캡션 (agents/marketing.js)
+- 마케팅 블로그 자동 포스팅 + SNS 캡션 생성 (agents/marketing.js)
 - 주간 전략 감사 리포트 + 비용 제안 승인 큐 (agents/strategy.js)
+- 고객관리팀 업무시간(평일 09:00~18:00 KST) 제한 (agents/chm.js)
 
-## 구현 가능한 갭 예시 (자유롭게 제안 가능)
+## 우선 구현 대상 갭 (탐지된 것 우선, 그 다음 아래 예시 참고)
+
+### [HIGH] 긴급 갭
+- 인스타그램 실제 업로드 미구현 — Instagram Graph API로 content_queue 승인 항목을 실제 게시 → agents/instagram-uploader.js
 
 ### 기능 갭
 - 체험 만료 후 재가입 유도 이메일 (만료 3일 후 한 번) → agents/trial-reengagement.js
 - 영업팀 업종별 리드 품질 분석 리포트 (주간) → agents/lead-quality-report.js
 - CHM 회원 위험도 재계산 + settings 업데이트
-- 마케팅 섹터별 포스팅 빈도 균형 모니터링
 
 ### 시스템 갭
 - 특정 부서가 평균 실행시간 2배 초과 시 관리자 알림 → agents/workflow-monitor.js
 - 에러율 높은 워크플로우 자동 재시도 로직 → .github/workflows/*.yml 수정
-- 영업팀 중복 실행 감지 및 방지 (concurrency 그룹) → .github/workflows/sales.yml 수정
-- 실행 시간 추적 및 대시보드 기록 → agents/perf-tracker.js
 
 ## 제약
 - Node.js ESM, 기존 테이블만 (content_queue, leads, settings, agent_tasks)
@@ -333,69 +368,88 @@ if (process.argv[1].endsWith('파일명.js')) run().catch(console.error);
 
 // ─────────────────────────────────────────────────────────────────────────
 export async function run() {
-  const isMonday = new Date().getUTCDay() === 1; // UTC 월요일 = KST 월요일 09:00
+  const IS_LONG_RUN = !!process.env.STRATEGY_LONG_RUN;
+  const deadline    = Date.now() + (IS_LONG_RUN ? 5.5 : 0.4) * 60 * 60 * 1000;
+  const isMonday    = new Date().getUTCDay() === 1;
+  let cycle = 0;
 
-  console.log(`\n🔍 [전략기획팀] ${isMonday ? '주간 전략 분석' : '일일 현황 점검'} 시작`);
+  console.log(`\n[전략기획팀] 시스템 감사 시작 (${IS_LONG_RUN ? '24/7 루프' : '단기 1사이클'})`);
 
-  const [auditData, memberStats, activeGoal, workflowStats] = await Promise.allSettled([
-    fetchAuditData(),
-    fetchMemberStats(),
-    fetchActiveGoal(),
-    fetchWorkflowStats(),
-  ]).then(results => results.map(r => r.status === 'fulfilled' ? r.value : null));
+  while (Date.now() < deadline) {
+    console.log(`\n--- 사이클 ${cycle + 1} ---`);
 
-  if (!auditData) {
-    await notifyError(DEPARTMENT, isMonday ? '주간 전략 분석' : '일일 현황 점검', new Error('운영 데이터 조회 실패'));
-    return;
-  }
+    const [auditData, memberStats, activeGoal, workflowStats] = await Promise.allSettled([
+      fetchAuditData(),
+      fetchMemberStats(),
+      fetchActiveGoal(),
+      fetchWorkflowStats(),
+    ]).then(results => results.map(r => r.status === 'fulfilled' ? r.value : null));
 
-  const members = memberStats ?? { total: '조회 실패', paid: 0, trial: 0, expired: 0 };
-  const goal    = activeGoal;
-  const isFirstRun = !goal;
-
-  console.log(`  → 유료 ${members.paid}명 / 체험 ${members.trial}명`);
-
-  // ── 평일: 일일 현황 점검 (Haiku, 빠름) ──────────────────────────────
-  if (!isMonday) {
-    const quickSummary = await ask(`
-오늘 jblogzy AI팀 운영 결과를 간략히 점검하세요 (150자 이내).
-
-회원현황: 유료 ${members.paid}명 / 체험 ${members.trial}명
-오늘 통계: ${JSON.stringify(auditData)}
-
-판단:
-- 🔴 즉시 보고 필요: 에러 다수, 리드 0건, 이메일 발송 실패 등
-- 🟢 정상: 별다른 이슈 없음
-
-상태 이모지 + 한 줄 요약만 출력.
-`, 200);
-
-    const isCritical = quickSummary.includes('🔴');
-    await send({
-      department: DEPARTMENT,
-      task_type:  '일일 현황 점검',
-      status:     'completed',
-      summary:    quickSummary.trim(),
-    });
-
-    if (isCritical && ADMIN_EMAIL) {
-      await sendMail({
-        to:      ADMIN_EMAIL,
-        subject: '[긴급] jblogzy AI팀 이상 감지',
-        html:    mdToHtml(quickSummary),
-        text:    quickSummary,
-      }).catch(e => console.error('  → 이메일 발송 실패:', e.message));
+    if (!auditData) {
+      await notifyError(DEPARTMENT, '시스템 스캔', new Error('운영 데이터 조회 실패'));
+      if (IS_LONG_RUN) await new Promise(r => setTimeout(r, 5 * 60 * 1000)); // 5분 후 재시도
+      continue;
     }
 
-    console.log(`✅ [전략기획팀] 일일 점검 완료: ${quickSummary.slice(0, 60)}\n`);
-    return;
-  }
+    const members    = memberStats ?? { total: '조회 실패', paid: 0, trial: 0, expired: 0 };
+    const goal       = activeGoal;
+    const isFirstRun = !goal;
 
-  // ── 이하 월요일 전체 분석 ─────────────────────────────────────────────
+    console.log(`  → 유료 ${members.paid}명 / 체험 ${members.trial}명`);
 
-  // ── Claude 프롬프트 ────────────────────────────────────────────────────
-  const prompt = isFirstRun
-    ? `
+    // ── 1. 갭 스캔 (매 사이클) ─────────────────────────────────────────
+    const gapScan = await askFast(`
+## AI팀 현황 스캔 — 즉시 조치 필요 갭을 파악하세요
+
+## AI팀 설계 현황
+${JSON.stringify(AI_TEAM, null, 2)}
+
+## 최근 운영 통계
+${JSON.stringify(auditData, null, 2)}
+
+## 회원 현황
+유료 ${members.paid}명 / 체험 ${members.trial}명
+
+## GitHub Actions 실행 통계
+${workflowStats ? JSON.stringify(workflowStats, null, 2) : '데이터 없음'}
+
+지시:
+- 즉시 조치 필요한 [HIGH] 갭이 있으면: "[HIGH] <갭 설명>" 형식으로 나열
+- 없으면 "🟢 정상 운영" 한 줄만 출력
+- 200자 이내
+`, 250);
+
+    const hasUrgent = gapScan.includes('[HIGH]');
+    console.log(`  → 갭 스캔: ${gapScan.slice(0, 100)}`);
+
+    // ── 2. 긴급 갭 → 즉시 PR (하루 1회 제한) ──────────────────────────
+    if (hasUrgent) {
+      const lastDevDate = await getLastDevDate();
+      const today       = new Date().toISOString().slice(0, 10);
+      if (lastDevDate !== today) {
+        console.log('  → 긴급 갭 탐지: 자율 개발 시작');
+        const devResult = await developFeature(gapScan);
+        if (devResult) {
+          await setLastDevDate(today);
+          if (ADMIN_EMAIL) {
+            const prNote = `<p style="background:#1a2e1a;padding:10px;border-radius:6px;margin-bottom:1em">🛠 <strong>긴급 갭 수정 PR 생성됨</strong>: <a href="${devResult.prUrl}" style="color:#4ade80">${devResult.title}</a><br><small>${devResult.rationale}</small></p>`;
+            await sendMail({
+              to:      ADMIN_EMAIL,
+              subject: `[전략기획팀 긴급] 갭 탐지 및 PR 생성: ${devResult.title}`,
+              html:    prNote + '<hr>' + mdToHtml(gapScan),
+              text:    `갭 탐지:\n${gapScan}\n\nPR: ${devResult.prUrl}`,
+            }).catch(e => console.error('  → 이메일 발송 실패:', e.message));
+          }
+        }
+      } else {
+        console.log('  → 긴급 갭 탐지: 오늘 이미 PR 생성됨 (건너뜀)');
+      }
+    }
+
+    // ── 3. 월요일 첫 사이클: 전체 주간 분석 ────────────────────────────
+    if (isMonday && cycle === 0) {
+      const prompt = isFirstRun
+        ? `
 당신은 jblogzy의 전략기획 총괄 임원입니다.
 아래 비즈니스 현황과 AI 자동화 팀 설계를 바탕으로 **최초 전략 계획서**를 작성하세요.
 
@@ -435,7 +489,7 @@ ${JSON.stringify(auditData, null, 2)}
 
 형식: 한국어, 경영 전략 보고서 톤, 800자 내외
 `
-    : `
+        : `
 당신은 jblogzy의 전략기획 총괄 임원입니다.
 이번 주 진척도를 검토하고 전략을 조정하세요.
 
@@ -458,8 +512,9 @@ ${JSON.stringify(AI_TEAM, null, 2)}
 ${workflowStats ? JSON.stringify(workflowStats, null, 2) : '데이터 없음'}
 
 ## 현재 실행 구조
-- 조간 번들(09:00 KST): 영업/마케팅/고객관리 병렬 동시 실행 → 전체 완료 후 전략기획팀 실행
-- 영업팀 추가 실행: 12:00, 16:00, 20:00 KST
+- 조간 번들(09:00 KST): 마케팅/고객관리 병렬 실행
+- 영업팀: 24/7 독립 루프 (6시간 잡 × 4회/일)
+- 전략기획팀: 24/7 독립 루프 (6시간 잡 × 4회/일)
 
 ---
 ## 작성 지침
@@ -478,7 +533,7 @@ ${workflowStats ? JSON.stringify(workflowStats, null, 2) : '데이터 없음'}
 - 부서별 평균 실행시간 중 이상치(평균 2배+)가 있는가
 - 에러율이 높은 워크플로우가 있는가
 - 현재 실행 구조에서 병목·중복·낭비가 있는가
-- 개선 가능한 구조적 변경 제안 (실행 순서, 병렬화, 불필요 중복 제거 등)
+- 개선 가능한 구조적 변경 제안
 
 ### 5. 기능/시스템 개선 제안
 - [무료] 또는 [비용발생: 예상 규모] 태그 필수
@@ -486,56 +541,66 @@ ${workflowStats ? JSON.stringify(workflowStats, null, 2) : '데이터 없음'}
 형식: 한국어, 800자 내외, 수치 직접 인용
 `;
 
-  const report = await ask(prompt);
-  console.log(`  → ${isFirstRun ? '최초 전략 계획서' : '주간 진척도 리포트'} 생성 완료`);
+      const report = await ask(prompt);
+      console.log(`  → ${isFirstRun ? '최초 전략 계획서' : '주간 진척도 리포트'} 생성 완료`);
 
-  // 비용 제안 추출 → 승인 큐
-  const costProposals = extractCostProposals(report);
-  for (const p of costProposals) await submitProposal(p);
+      const costProposals = extractCostProposals(report);
+      for (const p of costProposals) await submitProposal(p);
 
-  // 자율 코드 개발 → GitHub PR
-  const devResult = await developFeature(report);
+      if (isFirstRun) {
+        const proposed = {
+          title:   '90일 목표 (전략기획팀 수립)',
+          source:  '아래 전략 계획서 참고',
+          status:  'proposed',
+          created: new Date().toISOString(),
+        };
+        await fetch(`${CAFE24_API_BASE}/set_setting.php`, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ key: 'strategy_active_goal', value: JSON.stringify(proposed) }),
+        }).catch(() => {});
+      }
 
-  // 최초 실행 시: 목표를 '제안' 상태로 설정값 저장 (관리자 확인 후 직접 활성화)
-  if (isFirstRun) {
-    const goalMatch = report.match(/(\d+)명.*?(\d+)일|(\d+)명.*?(3개월|90일)/);
-    const proposed  = {
-      title:    '90일 목표 (전략기획팀 수립)',
-      source:   '아래 전략 계획서 참고',
-      status:   'proposed',
-      created:  new Date().toISOString(),
-    };
-    await fetch(`${CAFE24_API_BASE}/set_setting.php`, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ key: 'strategy_active_goal', value: JSON.stringify(proposed) }),
-    }).catch(() => {});
-  }
+      const taskType = isFirstRun ? '최초 전략 계획 수립' : '주간 전략 진척도 검토';
+      await send({
+        department: DEPARTMENT,
+        task_type:  taskType,
+        status:     'completed',
+        summary:    `${taskType} 완료 — 유료 ${members.paid}명 / 체험 ${members.trial}명${costProposals.length > 0 ? ` / 비용 제안 ${costProposals.length}건` : ''}`,
+        detail:     report,
+      });
 
-  const taskType = isFirstRun ? '최초 전략 계획 수립' : '주간 전략 진척도 검토';
+      if (ADMIN_EMAIL) {
+        const costNote = costProposals.length > 0
+          ? `<p style="background:#1e3a5f;padding:10px;border-radius:6px;margin-bottom:1em">⚠️ 승인 대기 제안 ${costProposals.length}건이 대시보드에 등록됐습니다.</p>`
+          : '';
+        await sendMail({
+          to:      ADMIN_EMAIL,
+          subject: `[jblogzy 전략기획팀] ${isFirstRun ? '최초 전략 계획서' : '주간 진척도 리포트'}`,
+          html:    costNote + mdToHtml(report),
+          text:    report,
+        }).catch(e => console.error('  → 이메일 발송 실패:', e.message));
+      }
+    }
 
-  const devNote  = devResult ? ` / 자율 개발 PR 1건` : '';
-  await send({
-    department: DEPARTMENT,
-    task_type:  taskType,
-    status:     'completed',
-    summary:    `${taskType} 완료 — 유료 ${members.paid}명 / 체험 ${members.trial}명${costProposals.length > 0 ? ` / 비용 제안 ${costProposals.length}건` : ''}${devNote}`,
-    detail:     report + (devResult ? `\n\n---\n🛠 자율 개발 PR: ${devResult.prUrl}` : ''),
-  });
+    // ── 4. 스캔 결과 대시보드 기록 ────────────────────────────────────
+    await send({
+      department: DEPARTMENT,
+      task_type:  '시스템 스캔',
+      status:     'completed',
+      summary:    `[사이클 ${cycle + 1}] ${gapScan.trim().slice(0, 100)}`,
+    });
 
-  if (ADMIN_EMAIL) {
-    const costNote = costProposals.length > 0
-      ? `<p style="background:#1e3a5f;padding:10px;border-radius:6px;margin-bottom:1em">⚠️ 승인 대기 제안 ${costProposals.length}건이 대시보드에 등록됐습니다.</p>`
-      : '';
-    const prNote = devResult
-      ? `<p style="background:#1a2e1a;padding:10px;border-radius:6px;margin-bottom:1em">🛠 <strong>자율 개발 PR 생성됨</strong>: <a href="${devResult.prUrl}" style="color:#4ade80">${devResult.title}</a><br><small>${devResult.rationale}</small></p>`
-      : '';
-    await sendMail({
-      to:      ADMIN_EMAIL,
-      subject: `[jblogzy 전략기획팀] ${isFirstRun ? '최초 전략 계획서' : '주간 진척도 리포트'}${devResult ? ' + 자율 개발 PR' : ''}`,
-      html:    costNote + prNote + mdToHtml(report),
-      text:    report + (devResult ? `\n\n자율 개발 PR: ${devResult.prUrl}` : ''),
-    }).catch(e => console.error('  → 이메일 발송 실패:', e.message));
+    cycle++;
+    if (!IS_LONG_RUN) break;
+
+    const nextScan = 30 * 60 * 1000; // 30분 후 재스캔
+    if (Date.now() + nextScan < deadline) {
+      console.log('  → 30분 후 다음 스캔...');
+      await new Promise(r => setTimeout(r, nextScan));
+    } else {
+      break;
+    }
   }
 
   console.log('✅ [전략기획팀] 완료\n');

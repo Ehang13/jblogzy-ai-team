@@ -284,7 +284,19 @@ async function generateRetentionEmail(member, riskData) {
   };
 }
 
+function isBusinessHours() {
+  const kst  = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
+  const day  = kst.getDay();   // 0=일, 6=토
+  const hour = kst.getHours();
+  return day >= 1 && day <= 5 && hour >= 9 && hour < 18;
+}
+
 export async function run() {
+  if (!isBusinessHours()) {
+    console.log('⏰ [고객관리팀] 업무시간 외 (평일 09:00~18:00만 실행) - 종료');
+    return;
+  }
+
   console.log('\n🤝 [고객관리팀] 회원 이탈 분석 및 리텐션 이메일 생성 시작');
 
   await notifyStart(DEPARTMENT, '회원 이탈 분석');

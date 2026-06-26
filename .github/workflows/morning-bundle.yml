@@ -57,19 +57,4 @@ jobs:
       - run: npm ci
       - run: node agents/chm.js
 
-  strategy:
-    name: 전략기획팀
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    needs: [marketing, chm]
-    if: always()   # 다른 부서가 실패해도 전략기획팀은 실행
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-      - run: npm ci
-      - run: node agents/strategy.js
+  # 전략기획팀은 strategy.yml로 24/7 독립 운영 (0 */6 * * *)

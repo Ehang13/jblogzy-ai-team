@@ -1,7 +1,9 @@
-name: 전략기획팀 - 주간 시스템 감사
+name: 전략기획팀 - 24/7 시스템 감사
 
 on:
-  workflow_dispatch:   # morning-bundle이 매일 09:00 KST에 실행 (월=전체분석, 평일=일일점검)
+  schedule:
+    - cron: '0 */6 * * *'   # UTC 0,6,12,18 = KST 9,15,21,3 (하루 4회 × 5.5시간 루프)
+  workflow_dispatch:         # 수동 실행 버튼
 
 concurrency:
   group: strategy
@@ -14,7 +16,7 @@ permissions:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 360    # 6시간
 
     steps:
       - uses: actions/checkout@v4
@@ -29,9 +31,10 @@ jobs:
       - name: 의존성 설치
         run: npm ci
 
-      - name: 전략기획팀 실행
+      - name: 전략기획팀 실행 (5.5시간 루프)
         run: node agents/strategy.js
         env:
+          STRATEGY_LONG_RUN:   'true'
           ANTHROPIC_API_KEY:   ${{ secrets.ANTHROPIC_API_KEY }}
           CAFE24_API_URL:      ${{ secrets.CAFE24_API_URL }}
           CAFE24_API_KEY:      ${{ secrets.CAFE24_API_KEY }}

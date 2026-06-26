@@ -406,8 +406,6 @@ export async function run() {
   }
 
   await notifyStart(DEPARTMENT, '리드 발굴');
-  const autoApprove = await isSalesAutoApproveEnabled();
-  console.log(`  자동 승인: ${autoApprove ? 'ON' : 'OFF'}`);
 
   // SALES_LONG_RUN=true(sales.yml): 5.5시간 루프 / 없으면 1.3시간(morning-bundle 안전 마진)
   const IS_LONG_RUN = !!process.env.SALES_LONG_RUN;
@@ -420,6 +418,9 @@ export async function run() {
 
   try {
     while (Date.now() < deadline) {
+      const autoApprove = await isSalesAutoApproveEnabled(); // 매 사이클마다 재조회 (런타임 설정 변경 즉시 반영)
+      console.log(`  자동 승인: ${autoApprove ? 'ON' : 'OFF'}`);
+
       const region     = ALL_REGIONS[cycle % ALL_REGIONS.length];
       const groupIdx   = cycle % GROUPS;
       const industries = ALL_INDUSTRIES.slice(
