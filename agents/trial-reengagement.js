@@ -5,221 +5,233 @@ import { send, notifyError } from '../core/reporter.js';
 const DEPARTMENT = 'chm';
 const TASK_TYPE = 'trial_reengagement';
 
-// ── helpers ──────────────────────────────────────────────────────────────────
+// ── DB 쿼리 헬퍼 (카페24 API 재사용) ─────────────────────────────────────────
+const BASE = process.env.CAFE24_API_URL.replace('/report.php', '');
+const KEY  = process.env.CAFE24_API_KEY;
 
-async function fetchMembers() {
-  const res = await fetch(process.env.JBLOGZY_API_URL, {
-    headers: { 'X-Api-Key': process.env.JBLOGZY_API_KEY },
-  });
-  if (!res.ok) throw new Error(`jblogzy API error: ${res.status}`);
-  const { members } = await res.json();
-  return members ?? [];
-}
-
-async function fetchSettings() {
-  const BASE = process.env.CAFE24_API_URL.replace('/report.php', '');
-  const KEY  = process.env.CAFE24_API_KEY;
-
-  const res = await fetch(`${BASE}/api/settings?status=trial_expired&converted=false`, {
-    headers: { 'X-Api-Key': KEY },
-  });
-  if (!res.ok) throw new Error(`settings API error: ${res.status}`);
-  const json = await res.json();
-  return json.settings ?? [];
-}
-
-async function fetchAgentTasks(userId) {
-  const BASE = process.env.CAFE24_API_URL.replace('/report.php', '');
-  const KEY  = process.env.CAFE24_API_KEY;
-
-  const res = await fetch(
-    `${BASE}/api/agent_tasks?user_id=${encodeURIComponent(userId)}&task_type=${TASK_TYPE}`,
-    { headers: { 'X-Api-Key': KEY } },
-  );
-  if (!res.ok) throw new Error(`agent_tasks fetch error: ${res.status}`);
-  const json = await res.json();
-  return json.tasks ?? [];
-}
-
-async function recordAgentTask({ userId, status, sentAt }) {
-  const BASE = process.env.CAFE24_API_URL.replace('/report.php', '');
-  const KEY  = process.env.CAFE24_API_KEY;
-
-  const res = await fetch(`${BASE}/api/agent_tasks`, {
+async function query(sql) {
+  const res = await fetch(`${BASE}/query.php`, {
     method: 'POST',
     headers: {
-      'X-Api-Key': KEY,
       'Content-Type': 'application/json',
+      'X-Api-Key': KEY,
     },
-    body: JSON.stringify({
-      user_id: userId,
-      task_type: TASK_TYPE,
-      status,
-      sent_at: sentAt,
-    }),
+    body: JSON.stringify({ sql }),
   });
-  if (!res.ok) throw new Error(`agent_tasks record error: ${res.status}`);
+  if (!res.ok) throw new Error(`DB query failed: ${res.status} ${await res.text()}`);
+  const json = await res.json();
+  return json.rows ?? json.data ?? json;
+}
+
+// ── 이메일 발송 유틸 (CHM 에이전트 공용) ─────────────────────────────────────
+async function sendEmail({ to, name, subject, html }) {
+  const res = await fetch(`${BASE}/email.php`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Api-Key': KEY,
+    },
+    body: JSON.stringify({ to, name, subject, html }),
+  });
+  if (!res.ok) throw new Error(`sendEmail failed: ${res.status} ${await res.text()}`);
   return res.json();
 }
 
-async function sendEmail({ to, subject, html }) {
-  const BASE = process.env.CAFE24_API_URL.replace('/report.php', '');
-  const KEY  = process.env.CAFE24_API_KEY;
-
-  const res = await fetch(`${BASE}/api/email/send`, {
-    method: 'POST',
-    headers: {
-      'X-Api-Key': KEY,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ to, subject, html }),
-  });
-  if (!res.ok) throw new Error(`email send error: ${res.status}`);
-  return res.json();
+// ── 만료 후 3일(±12h) 경과, 미전환 회원 조회 ─────────────────────────────────
+async function fetchTargetMembers() {
+  const sql = `
+    SELECT
+      s.member_id,
+      s.trial_expired_at,
+      s.used_features,
+      COALESCE(l.email, s.email) AS email,
+      COALESCE(l.name,  s.name)  AS name
+    FROM settings s
+    LEFT JOIN leads l ON l.member_id = s.member_id
+    WHERE
+      s.trial_expired_at IS NOT NULL
+      AND s.converted = 0
+      AND s.trial_expired_at BETWEEN
+            NOW() - INTERVAL 3 DAY - INTERVAL 12 HOUR
+        AND NOW() - INTERVAL 3 DAY + INTERVAL 12 HOUR
+      AND COALESCE(l.email, s.email) IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM agent_tasks at2
+        WHERE at2.member_id = s.member_id
+          AND at2.type      = '${TASK_TYPE}'
+          AND at2.status    = 'sent'
+      )
+  `;
+  return query(sql);
 }
 
-function daysSince(dateStr) {
-  const expired = new Date(dateStr);
-  const now = new Date();
-  return Math.floor((now - expired) / (1000 * 60 * 60 * 24));
+// ── 사용 기능 요약 파싱 ───────────────────────────────────────────────────────
+function parseUsedFeatures(raw) {
+  if (!raw) return [];
+  try {
+    const arr = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return String(raw).split(',').map(s => s.trim()).filter(Boolean);
+  }
 }
 
-// ── email template ────────────────────────────────────────────────────────────
-
-async function buildEmailContent({ member, setting }) {
-  const activitySummary = setting.activity_summary
-    ?? `서비스를 이용해 주신 ${setting.trial_days ?? 3}일 동안의 활동 내역`;
+// ── 개인화 이메일 본문 생성 (Claude) ─────────────────────────────────────────
+async function generateEmailContent({ name, usedFeatures }) {
+  const featureList = usedFeatures.length > 0
+    ? usedFeatures.map(f => `- ${f}`).join('\n')
+    : '- 다양한 블로그 관리 기능';
 
   const prompt = `
-당신은 SaaS 서비스의 고객 성공 매니저입니다.
-3일 무료 체험이 만료된 후 아직 유료 전환을 하지 않은 사용자에게 보낼 재가입 유도 이메일을 작성해 주세요.
+당신은 SaaS 서비스의 이메일 마케팅 전문가입니다.
+무료 체험이 만료된 지 3일이 지난 회원에게 재가입을 유도하는 이메일 HTML 본문을 작성하세요.
 
-[사용자 정보]
-- 이름: ${member?.name ?? setting.user_name ?? '고객'}
-- 이메일: ${setting.email}
-- 체험 만료일: ${setting.trial_expired_at}
-- 체험 중 활동 요약: ${activitySummary}
+[회원 정보]
+- 이름: ${name || '고객'}
+- 체험 중 사용한 주요 기능:
+${featureList}
 
 [작성 지침]
-1. 따뜻하고 개인적인 톤으로 작성
-2. 체험 기간 동안의 주요 활동을 구체적으로 언급
-3. 한정 할인 코드 "COMEBACK30" (30% 할인, 7일 내 유효) 포함
-4. 서비스의 핵심 가치 2~3가지 간결하게 소개
-5. 명확한 CTA(혜택 받기 버튼) 포함
-6. "보장", "확정", "100%" 등의 단언적 표현 사용 금지
-7. HTML 형식으로 작성 (인라인 스타일 포함, 깔끔한 디자인)
-8. 마지막에 반드시 수신거부 안내 문구 포함: "이 이메일은 서비스 이용 약관에 따라 발송되었습니다. 더 이상 이메일을 받지 않으시려면 <a href='{unsubscribe_link}'>수신거부</a>를 클릭해 주세요."
-9. 결과는 JSON으로: { "subject": "이메일 제목", "html": "HTML 본문" }
+1. 따뜻하고 친근한 톤으로 작성
+2. 체험 기간 중 사용한 기능을 구체적으로 언급하며 가치를 상기
+3. 한정 기간 특별 할인 혜택 문구 포함 (단, "보장", "확정", "100%" 등 단언적 표현 금지)
+4. 재가입 유도 CTA 버튼 포함
+5. 수신거부 안내 문구를 본문 하단에 반드시 포함
+6. HTML 형식으로 출력 (스타일은 인라인 CSS 사용, 깔끔하고 모바일 친화적)
+7. 과도한 영업 압박 없이 자연스럽게 유도
 
-JSON만 출력하세요.
+HTML 본문만 출력하세요. (<!DOCTYPE html> 포함 완전한 HTML)
 `;
 
-  const result = await askJson(prompt, false);
-  return result;
+  const html = await ask(prompt, 1500);
+  return html.trim();
 }
 
-// ── main ──────────────────────────────────────────────────────────────────────
+// ── agent_tasks 기록 ──────────────────────────────────────────────────────────
+async function recordTask(memberId, email, detail) {
+  const sql = `
+    INSERT INTO agent_tasks (member_id, type, status, email, detail, created_at)
+    VALUES (
+      ${memberId ? `'${memberId}'` : 'NULL'},
+      '${TASK_TYPE}',
+      'sent',
+      '${email.replace(/'/g, "\\'")}',
+      '${JSON.stringify(detail).replace(/'/g, "\\'")}',
+      NOW()
+    )
+  `;
+  await query(sql);
+}
 
+// ── 메인 실행 ─────────────────────────────────────────────────────────────────
 export async function run() {
   const startedAt = new Date().toISOString();
-  const results = { processed: 0, sent: 0, skipped_duplicate: 0, skipped_too_early: 0, errors: 0 };
-  const logs = [];
+  const results = { sent: [], skipped: [], errors: [] };
 
-  let settings = [];
   let members = [];
-
   try {
-    [settings, members] = await Promise.all([fetchSettings(), fetchMembers()]);
+    members = await fetchTargetMembers();
   } catch (err) {
-    await notifyError(err, { context: 'trial-reengagement: initial data fetch' });
+    await notifyError({
+      department: DEPARTMENT,
+      task_type: TASK_TYPE,
+      error: err,
+      message: '대상 회원 조회 실패',
+    });
     await send({
       department: DEPARTMENT,
       task_type: TASK_TYPE,
       status: 'error',
-      summary: '초기 데이터 조회 실패로 에이전트 중단',
+      summary: '대상 회원 조회 실패로 에이전트 중단',
       detail: err.message,
     });
     return;
   }
 
-  const memberMap = Object.fromEntries(members.map((m) => [m.id ?? m.user_id, m]));
+  if (members.length === 0) {
+    await send({
+      department: DEPARTMENT,
+      task_type: TASK_TYPE,
+      status: 'completed',
+      summary: '재가입 유도 대상 회원 없음',
+      detail: `실행 시각: ${startedAt}`,
+    });
+    return;
+  }
 
-  for (const setting of settings) {
-    const userId = setting.user_id ?? setting.id;
-    const userLabel = `user_id=${userId}`;
+  for (const member of members) {
+    const { member_id, email, name, trial_expired_at, used_features } = member;
 
-    results.processed++;
+    // 이메일 누락 스킵
+    if (!email) {
+      results.skipped.push({ member_id, reason: '이메일 없음' });
+      continue;
+    }
 
     try {
-      // 1) 중복 발송 방지 체크
-      const existingTasks = await fetchAgentTasks(userId);
-      const alreadySent = existingTasks.some(
-        (t) => t.task_type === TASK_TYPE && t.status === 'sent',
-      );
-      if (alreadySent) {
-        results.skipped_duplicate++;
-        logs.push({ userId, reason: 'duplicate', status: 'skipped' });
-        continue;
-      }
+      const usedFeatures = parseUsedFeatures(used_features);
 
-      // 2) 만료일 기준 3일 경과 여부 확인
-      const expired = setting.trial_expired_at ?? setting.expired_at;
-      if (!expired) {
-        results.skipped_too_early++;
-        logs.push({ userId, reason: 'no_expiry_date', status: 'skipped' });
-        continue;
-      }
+      // 이메일 본문 생성
+      const html = await generateEmailContent({ name, usedFeatures });
 
-      const days = daysSince(expired);
-      if (days < 3) {
-        results.skipped_too_early++;
-        logs.push({ userId, reason: `only_${days}_days_since_expiry`, status: 'skipped' });
-        continue;
-      }
+      // 이메일 발송
+      await sendEmail({
+        to: email,
+        name: name || '고객',
+        subject: `${name || '고객'}님, 체험 기간에 사용하셨던 기능들이 기다리고 있어요 🎁`,
+        html,
+      });
 
-      // 3) 이메일 콘텐츠 생성
-      const member = memberMap[userId] ?? null;
-      const emailTo = setting.email ?? member?.email;
-      if (!emailTo) {
-        results.errors++;
-        logs.push({ userId, reason: 'no_email_address', status: 'error' });
-        continue;
-      }
+      // 발송 이력 기록
+      await recordTask(member_id, email, {
+        trial_expired_at,
+        used_features: usedFeatures,
+        sent_at: new Date().toISOString(),
+      });
 
-      const { subject, html } = await buildEmailContent({ member, setting });
-
-      // 4) 이메일 발송
-      await sendEmail({ to: emailTo, subject, html });
-
-      const sentAt = new Date().toISOString();
-
-      // 5) agent_tasks 기록
-      await recordAgentTask({ userId, status: 'sent', sentAt });
-
-      results.sent++;
-      logs.push({ userId, email: emailTo, sentAt, status: 'sent' });
+      results.sent.push({ member_id, email, name });
     } catch (err) {
-      results.errors++;
-      logs.push({ userId, reason: err.message, status: 'error' });
-      await notifyError(err, { context: `trial-reengagement: ${userLabel}` });
-      // 에러 발생 시 해당 항목 건너뜀 (프로세스 중단 없음)
-      continue;
+      results.errors.push({ member_id, email, error: err.message });
+      await notifyError({
+        department: DEPARTMENT,
+        task_type: TASK_TYPE,
+        error: err,
+        message: `회원 ${member_id}(${email}) 처리 중 오류`,
+      });
+      // 개별 오류는 스킵하고 계속 진행
     }
   }
 
-  // 6) 발송 결과 요약 로그 출력
-  const summary = `체험 만료 재가입 유도 이메일 발송 완료 | 대상: ${results.processed}명 | 발송: ${results.sent}명 | 중복 건너뜀: ${results.skipped_duplicate}명 | 3일 미경과: ${results.skipped_too_early}명 | 오류: ${results.errors}건`;
+  // ── 결과 리포트 ────────────────────────────────────────────────────────────
+  const status = results.errors.length > 0 && results.sent.length === 0
+    ? 'error'
+    : 'completed';
 
-  console.log('[trial-reengagement]', summary);
-  console.log('[trial-reengagement] details:', JSON.stringify(logs, null, 2));
+  const summary =
+    `총 대상 ${members.length}명 | ` +
+    `발송 완료 ${results.sent.length}명 | ` +
+    `스킵 ${results.skipped.length}명 | ` +
+    `오류 ${results.errors.length}명`;
+
+  const detail = [
+    `## 실행 시각\n${startedAt}`,
+    `## 발송 완료 (${results.sent.length}명)\n` +
+      (results.sent.map(r => `- [${r.member_id}] ${r.name} <${r.email}>`).join('\n') || '없음'),
+    `## 스킵 (${results.skipped.length}명)\n` +
+      (results.skipped.map(r => `- [${r.member_id}] ${r.reason}`).join('\n') || '없음'),
+    `## 오류 (${results.errors.length}명)\n` +
+      (results.errors.map(r => `- [${r.member_id}] ${r.email}: ${r.error}`).join('\n') || '없음'),
+  ].join('\n\n');
 
   await send({
     department: DEPARTMENT,
     task_type: TASK_TYPE,
-    status: results.errors > 0 && results.sent === 0 ? 'error' : 'completed',
+    status,
     summary,
-    detail: JSON.stringify({ startedAt, finishedAt: new Date().toISOString(), results, logs }),
+    detail,
   });
 }
 
-if (process.argv[1].endsWith('trial-reengagement.js')) run().catch(console.error);
+if (process.argv[1].endsWith('trial-reengagement.js')) {
+  run().catch(console.error);
+}
