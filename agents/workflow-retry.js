@@ -2,339 +2,198 @@ import 'dotenv/config';
 import { ask, askJson, askFast } from '../core/claude.js';
 import { send, notifyError } from '../core/reporter.js';
 import pg from 'pg';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const { Pool } = pg;
 
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
 const DEPARTMENT = 'chm';
-const FAILURE_THRESHOLD = 3;
-const MAX_RETRY_COUNT = 3;
-const SCAN_WINDOW_HOURS = 1;
+const MAX_RETRY = 3;
 
-const BACKOFF_MINUTES = [1, 2, 4]; // exponential backoff: 1분→2분→4분
+// 지수 백오프 간격 (분 단위)
+const BACKOFF_INTERVALS = [1, 5, 15];
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized: false } : false,
-});
-
-async function getFailedAgentGroups() {
-  const client = await pool.connect();
-  try {
-    const windowStart = new Date(Date.now() - SCAN_WINDOW_HOURS * 60 * 60 * 1000).toISOString();
-
-    const result = await client.query(
-      `SELECT
-        agent_id,
-        COUNT(*) AS failure_count,
-        MAX(updated_at) AS last_failure_at,
-        json_agg(
-          json_build_object(
-            'id', id,
-            'task_type', task_type,
-            'retry_count', retry_count,
-            'error_message', error_message,
-            'created_at', created_at,
-            'updated_at', updated_at
-          ) ORDER BY updated_at DESC
-        ) AS tasks
-      FROM agent_tasks
-      WHERE status = 'failed'
-        AND updated_at >= $1
-        AND retry_count < $2
-      GROUP BY agent_id
-      HAVING COUNT(*) >= $3
-      ORDER BY failure_count DESC`,
-      [windowStart, MAX_RETRY_COUNT, FAILURE_THRESHOLD]
-    );
-
-    return result.rows;
-  } finally {
-    client.release();
-  }
+function getBackoffInterval(retryCount) {
+  const idx = Math.min(retryCount, BACKOFF_INTERVALS.length - 1);
+  return BACKOFF_INTERVALS[idx];
 }
 
-async function getDeadLetterCandidates() {
-  const client = await pool.connect();
-  try {
-    const result = await client.query(
-      `SELECT id, agent_id, task_type, retry_count, error_message, created_at, updated_at
-       FROM agent_tasks
-       WHERE status = 'failed'
-         AND retry_count >= $1
-       ORDER BY updated_at DESC`,
-      [MAX_RETRY_COUNT]
-    );
-    return result.rows;
-  } finally {
-    client.release();
-  }
+async function fetchFailedTasks(client) {
+  const query = `
+    SELECT t.*
+    FROM agent_tasks t
+    WHERE t.status = 'failed'
+      AND t.retry_count < $1
+      AND t.updated_at < NOW() - (
+        CASE t.retry_count
+          WHEN 0 THEN INTERVAL '1 minute'
+          WHEN 1 THEN INTERVAL '5 minutes'
+          ELSE INTERVAL '15 minutes'
+        END
+      )
+    ORDER BY t.updated_at ASC
+  `;
+  const result = await client.query(query, [MAX_RETRY]);
+  return result.rows;
 }
 
-async function scheduleRetry(taskId, retryCount) {
-  const client = await pool.connect();
-  try {
-    const backoffIndex = Math.min(retryCount, BACKOFF_MINUTES.length - 1);
-    const delayMinutes = BACKOFF_MINUTES[backoffIndex];
-    const scheduledAt = new Date(Date.now() + delayMinutes * 60 * 1000).toISOString();
-
-    await client.query(
-      `UPDATE agent_tasks
-       SET status = 'pending',
-           retry_count = retry_count + 1,
-           scheduled_at = $1,
-           updated_at = NOW()
-       WHERE id = $2
-         AND status = 'failed'`,
-      [scheduledAt, taskId]
-    );
-
-    return { taskId, delayMinutes, scheduledAt };
-  } finally {
-    client.release();
-  }
+async function markCompleted(client, taskId) {
+  await client.query(
+    `UPDATE agent_tasks SET status = 'completed', updated_at = NOW() WHERE id = $1`,
+    [taskId]
+  );
 }
 
-async function markAsDeadLetter(taskId, agentId, reason) {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-
-    await client.query(
-      `UPDATE agent_tasks
-       SET status = 'dead_letter',
-           updated_at = NOW()
-       WHERE id = $1`,
-      [taskId]
-    );
-
-    await client.query(
-      `INSERT INTO settings (key, value, created_at, updated_at)
-       VALUES ($1, $2, NOW(), NOW())
-       ON CONFLICT (key) DO UPDATE
-         SET value = $2, updated_at = NOW()`,
-      [
-        `alert_dead_letter_${taskId}`,
-        JSON.stringify({
-          task_id: taskId,
-          agent_id: agentId,
-          reason,
-          flagged_at: new Date().toISOString(),
-          notification_sent: false,
-        }),
-      ]
-    );
-
-    await client.query('COMMIT');
-    return true;
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
+async function incrementRetry(client, taskId, retryCount, errorMessage) {
+  await client.query(
+    `UPDATE agent_tasks
+     SET retry_count = $2, last_error = $3, updated_at = NOW()
+     WHERE id = $1`,
+    [taskId, retryCount + 1, errorMessage]
+  );
 }
 
-async function analyzeFailurePattern(agentGroup) {
-  const { agent_id, failure_count, tasks } = agentGroup;
+async function markDeadLetter(client, taskId, errorMessage) {
+  await client.query(
+    `UPDATE agent_tasks SET status = 'dead_letter', last_error = $2, updated_at = NOW() WHERE id = $1`,
+    [taskId, errorMessage]
+  );
 
-  const errorSummary = tasks
-    .slice(0, 5)
-    .map((t) => `[${t.task_type}] ${t.error_message || '알 수 없는 오류'}`)
-    .join('\n');
+  const alertKey = `alert_dead_letter_${taskId}`;
+  const alertValue = JSON.stringify({
+    task_id: taskId,
+    marked_at: new Date().toISOString(),
+    error: errorMessage,
+  });
 
-  const prompt = `
-다음은 에이전트(${agent_id})에서 발생한 반복 실패 패턴입니다.
-최근 1시간 내 ${failure_count}회 실패가 발생했습니다.
-
-오류 목록:
-${errorSummary}
-
-다음을 간단히 분석해주세요 (3줄 이내):
-1. 주요 실패 원인 추정
-2. 재시도로 해소 가능성 (높음/중간/낮음)
-3. 즉각 조치 권고사항
-
-반드시 추정/가능성 표현을 사용하고, 단정적 표현은 피해주세요.
-`.trim();
-
-  try {
-    const analysis = await askFast(prompt, 300);
-    return analysis;
-  } catch {
-    return '패턴 분석을 일시적으로 수행하지 못했습니다.';
-  }
+  await client.query(
+    `INSERT INTO settings (key, value, updated_at)
+     VALUES ($1, $2, NOW())
+     ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
+    [alertKey, alertValue]
+  );
 }
 
-async function generateRetryReport(results) {
-  const { retried, deadLettered, skipped, agentGroups } = results;
+async function loadAndRunAgent(agentName, task) {
+  // agent_name 기준으로 동적 import
+  const agentPath = path.resolve(__dirname, `${agentName}.js`);
+  const agentModule = await import(agentPath);
 
-  const prompt = `
-워크플로우 자동 재시도 처리 결과를 요약해주세요.
-
-처리 통계:
-- 재시도 스케줄링된 태스크: ${retried.length}건
-- dead_letter로 마킹된 태스크: ${deadLettered.length}건
-- 건너뛴 항목(오류): ${skipped.length}건
-- 영향받은 에이전트 그룹: ${agentGroups.length}개
-
-재시도 스케줄 상세:
-${retried.slice(0, 10).map((r) => `- Task ${r.taskId}: ${r.delayMinutes}분 후 재시도 예정`).join('\n')}
-
-dead_letter 항목:
-${deadLettered.slice(0, 5).map((d) => `- Task ${d.taskId} (Agent: ${d.agentId}): ${d.reason}`).join('\n')}
-
-운영팀에게 전달할 요약 보고서를 작성해주세요.
-추정/가능성 등 완곡한 표현을 사용하고 단정적 표현은 피해주세요.
-한국어로 작성하며 200자 이내로 요약해주세요.
-`.trim();
-
-  try {
-    const summary = await ask(prompt, 400);
-    return summary;
-  } catch {
-    return `자동 재시도 처리 완료: 재시도 ${retried.length}건, dead_letter ${deadLettered.length}건 처리됨`;
+  if (typeof agentModule.run !== 'function') {
+    throw new Error(`에이전트 '${agentName}'에 run() 함수가 존재하지 않습니다.`);
   }
+
+  await agentModule.run(task);
 }
 
 export async function run() {
-  const retried = [];
-  const deadLettered = [];
-  const skipped = [];
-  const analysisLogs = [];
+  const client = await pool.connect();
+  let processedCount = 0;
+  let successCount = 0;
+  let deadLetterCount = 0;
+  const errors = [];
 
-  console.log('[workflow-retry] 에러율 높은 워크플로우 스캔 시작...');
-
-  // 1. dead_letter 후보 먼저 처리 (최대 재시도 초과)
-  let deadLetterCandidates = [];
   try {
-    deadLetterCandidates = await getDeadLetterCandidates();
-    console.log(`[workflow-retry] dead_letter 후보: ${deadLetterCandidates.length}건`);
-  } catch (err) {
-    notifyError(err, { step: 'getDeadLetterCandidates' });
-  }
+    const tasks = await fetchFailedTasks(client);
 
-  for (const task of deadLetterCandidates) {
-    try {
-      const reason = `최대 재시도 횟수(${MAX_RETRY_COUNT}회) 초과. 최근 오류: ${task.error_message || '알 수 없음'}`;
-      await markAsDeadLetter(task.id, task.agent_id, reason);
-      deadLettered.push({ taskId: task.id, agentId: task.agent_id, reason });
-      console.log(`[workflow-retry] dead_letter 마킹: task=${task.id}, agent=${task.agent_id}`);
-    } catch (err) {
-      notifyError(err, { step: 'markAsDeadLetter', taskId: task.id });
-      skipped.push({ taskId: task.id, reason: err.message });
+    if (tasks.length === 0) {
+      await send({
+        department: DEPARTMENT,
+        task_type: 'workflow_retry',
+        status: 'completed',
+        summary: '재시도 대상 태스크 없음',
+        detail: '현재 재시도 조건에 해당하는 failed 태스크가 없습니다.',
+      });
+      return;
     }
-  }
 
-  // 2. 실패율 높은 에이전트 그룹 스캔
-  let agentGroups = [];
-  try {
-    agentGroups = await getFailedAgentGroups();
-    console.log(`[workflow-retry] 실패율 높은 에이전트 그룹: ${agentGroups.length}개`);
-  } catch (err) {
-    notifyError(err, { step: 'getFailedAgentGroups' });
-  }
+    for (const task of tasks) {
+      processedCount++;
+      const { id: taskId, agent_name: agentName, retry_count: retryCount } = task;
 
-  // 3. 각 그룹별 처리
-  for (const group of agentGroups) {
-    try {
-      // 패턴 분석
-      const analysis = await analyzeFailurePattern(group);
-      analysisLogs.push({ agent_id: group.agent_id, analysis });
+      try {
+        await loadAndRunAgent(agentName, task);
 
-      // 해당 그룹의 태스크들 재시도 스케줄링
-      for (const task of group.tasks) {
-        try {
-          if (task.retry_count >= MAX_RETRY_COUNT) {
-            // 이미 최대 재시도 초과 - dead_letter 처리
-            const reason = `에이전트 그룹 스캔 중 최대 재시도 초과 감지. 오류: ${task.error_message || '알 수 없음'}`;
-            await markAsDeadLetter(task.id, group.agent_id, reason);
-            deadLettered.push({ taskId: task.id, agentId: group.agent_id, reason });
-          } else {
-            const result = await scheduleRetry(task.id, task.retry_count);
-            retried.push(result);
-            console.log(
-              `[workflow-retry] 재시도 스케줄: task=${task.id}, agent=${group.agent_id}, ` +
-                `retryCount=${task.retry_count + 1}/${MAX_RETRY_COUNT}, delay=${result.delayMinutes}분`
-            );
+        await markCompleted(client, taskId);
+        successCount++;
+
+        console.log(`[workflow-retry] 태스크 ${taskId} (${agentName}) 재실행 성공`);
+      } catch (err) {
+        const errorMessage = err?.message || String(err);
+        console.error(`[workflow-retry] 태스크 ${taskId} (${agentName}) 재실행 실패:`, errorMessage);
+
+        const nextRetryCount = retryCount + 1;
+
+        if (nextRetryCount >= MAX_RETRY) {
+          // dead_letter 전환
+          try {
+            await markDeadLetter(client, taskId, errorMessage);
+            deadLetterCount++;
+            console.warn(`[workflow-retry] 태스크 ${taskId} dead_letter 전환 완료`);
+          } catch (dbErr) {
+            notifyError(dbErr, `dead_letter 마킹 실패 - task_id: ${taskId}`);
+            errors.push({ taskId, agentName, error: dbErr.message });
           }
-        } catch (taskErr) {
-          notifyError(taskErr, { step: 'scheduleRetry', taskId: task.id, agentId: group.agent_id });
-          skipped.push({ taskId: task.id, reason: taskErr.message });
+        } else {
+          // retry_count 증가 및 last_error 업데이트
+          try {
+            await incrementRetry(client, taskId, retryCount, errorMessage);
+            const nextInterval = getBackoffInterval(nextRetryCount);
+            console.log(`[workflow-retry] 태스크 ${taskId} retry_count → ${nextRetryCount}, 다음 재시도: ${nextInterval}분 후`);
+          } catch (dbErr) {
+            notifyError(dbErr, `retry_count 업데이트 실패 - task_id: ${taskId}`);
+            errors.push({ taskId, agentName, error: dbErr.message });
+          }
         }
+
+        errors.push({ taskId, agentName, error: errorMessage });
+        notifyError(err, `에이전트 재실행 실패 - task_id: ${taskId}, agent: ${agentName}`);
       }
-    } catch (groupErr) {
-      notifyError(groupErr, { step: 'processAgentGroup', agentId: group.agent_id });
-      skipped.push({ agentId: group.agent_id, reason: groupErr.message });
     }
-  }
 
-  // 4. 처리 결과 보고
-  const results = { retried, deadLettered, skipped, agentGroups };
-  const reportSummary = await generateRetryReport(results);
+    const summary = `처리: ${processedCount}건 | 성공: ${successCount}건 | dead_letter: ${deadLetterCount}건 | 실패: ${errors.length}건`;
 
-  const detailLines = [
-    `## 워크플로우 자동 재시도 처리 결과`,
-    ``,
-    `### 처리 통계`,
-    `- 재시도 스케줄링: ${retried.length}건`,
-    `- dead_letter 마킹: ${deadLettered.length}건`,
-    `- 건너뛴 항목: ${skipped.length}건`,
-    `- 영향 에이전트 그룹: ${agentGroups.length}개`,
-    ``,
-    `### Exponential Backoff 스케줄`,
-    `- 1차 재시도: 1분 후`,
-    `- 2차 재시도: 2분 후`,
-    `- 3차 재시도: 4분 후`,
-    `- 3회 초과 시: dead_letter 처리`,
-    ``,
-  ];
-
-  if (analysisLogs.length > 0) {
-    detailLines.push(`### 에이전트 실패 패턴 분석`);
-    for (const log of analysisLogs.slice(0, 3)) {
-      detailLines.push(`**Agent: ${log.agent_id}**`);
-      detailLines.push(log.analysis);
-      detailLines.push('');
-    }
-  }
-
-  if (deadLettered.length > 0) {
-    detailLines.push(`### dead_letter 마킹 항목 (settings 알림 플래그 기록됨)`);
-    deadLettered.slice(0, 10).forEach((d) => {
-      detailLines.push(`- Task ${d.taskId} (Agent: ${d.agentId})`);
+    await send({
+      department: DEPARTMENT,
+      task_type: 'workflow_retry',
+      status: errors.length > 0 && successCount === 0 ? 'error' : 'completed',
+      summary,
+      detail: [
+        `## 워크플로우 자동 재시도 결과`,
+        ``,
+        `- 전체 처리 태스크: ${processedCount}건`,
+        `- 재실행 성공: ${successCount}건`,
+        `- Dead Letter 전환: ${deadLetterCount}건`,
+        `- 재실행 실패(재시도 예정): ${errors.filter((_, i) => i < errors.length - deadLetterCount).length}건`,
+        ``,
+        deadLetterCount > 0
+          ? `### Dead Letter 전환된 태스크\n${errors
+              .slice(0, deadLetterCount)
+              .map((e) => `- task_id: ${e.taskId} (${e.agentName}): ${e.error}`)
+              .join('\n')}`
+          : '',
+        ``,
+        `> 본 메일은 자동 발송되며 수신을 원하지 않으시면 관리자에게 문의해 주세요.`,
+      ]
+        .filter(Boolean)
+        .join('\n'),
     });
-    detailLines.push('');
-  }
-
-  if (retried.length > 0) {
-    detailLines.push(`### 재시도 스케줄 상세 (최근 10건)`);
-    retried.slice(0, 10).forEach((r) => {
-      detailLines.push(`- Task ${r.taskId}: ${r.delayMinutes}분 후 (${r.scheduledAt})`);
+  } catch (err) {
+    notifyError(err, 'workflow-retry 전체 실행 오류');
+    await send({
+      department: DEPARTMENT,
+      task_type: 'workflow_retry',
+      status: 'error',
+      summary: '워크플로우 재시도 로직 실행 중 오류 발생',
+      detail: `오류 내용: ${err?.message || String(err)}\n\n> 본 메일은 자동 발송되며 수신을 원하지 않으시면 관리자에게 문의해 주세요.`,
     });
-    detailLines.push('');
+  } finally {
+    client.release();
+    await pool.end();
   }
-
-  detailLines.push(`---`);
-  detailLines.push(`본 알림은 자동화 시스템에서 발송됩니다. 수신을 원치 않으시면 시스템 관리자에게 수신거부를 요청해주세요.`);
-
-  const hasIssues = deadLettered.length > 0 || skipped.length > 0;
-
-  await send({
-    department: DEPARTMENT,
-    task_type: 'workflow_retry',
-    status: hasIssues ? 'error' : 'completed',
-    summary: reportSummary,
-    detail: detailLines.join('\n'),
-    retried_count: retried.length,
-    dead_letter_count: deadLettered.length,
-    skipped_count: skipped.length,
-    affected_agents: agentGroups.length,
-  });
-
-  await pool.end();
-  console.log('[workflow-retry] 완료.');
-
-  return results;
 }
 
 if (process.argv[1].endsWith('workflow-retry.js')) run().catch(console.error);
