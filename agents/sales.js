@@ -429,6 +429,10 @@ export async function run() {
       );
 
       console.log(`\n[사이클 ${cycle + 1}] ${region} / ${industries.map(i => i.name).join(', ')}`);
+      await send({
+        department: DEPARTMENT, task_type: '리드 발굴', status: 'running',
+        summary: `[사이클 ${cycle + 1}] ${region} / ${industries.map(i => i.name).join(', ')} 크롤링 중...`,
+      });
       const cycleLeads = await crawlAndReport(browser, region, industries, autoApprove);
       totalLeads += cycleLeads;
 

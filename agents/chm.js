@@ -304,6 +304,9 @@ export async function run() {
   const autoApprove = await isChmAutoApproveEnabled();
   if (autoApprove) console.log('  → 자동 승인 모드 ON');
 
+  await send({ department: DEPARTMENT, task_type: '회원 데이터 조회', status: 'running',
+    summary: '회원 데이터 조회 중...' });
+
   // 재생성 요청 항목 먼저 처리
   const regenItems = await fetchRegenMemberIds();
   const regenMemberIds = new Set(regenItems.map(r => String(r.member_id)));
@@ -322,6 +325,9 @@ export async function run() {
   // 유료 회원 / 체험 회원 분리
   const paidMembers  = allMembers.filter(m => m.sub_status === 'active').slice(0, 30);
   const trialMembers = allMembers.filter(m => m.sub_status === 'trialing');
+
+  await send({ department: DEPARTMENT, task_type: '이탈 위험도 분석', status: 'running',
+    summary: `이탈 위험도 분석 중... (유료 ${paidMembers.length}명 / 체험 ${trialMembers.length}명)` });
 
   // 최근 30일 내 발송된 회원 제외
   const recentlyContacted = await fetchRecentlyContactedIds();

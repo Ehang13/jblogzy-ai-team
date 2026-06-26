@@ -122,6 +122,8 @@ export async function run() {
 
   for (const sector of todaySectors) {
     console.log(`  → [${sector.name}] 처리 중...`);
+    await send({ department: DEPARTMENT, task_type: '콘텐츠 생성', status: 'running',
+      summary: `[${sector.name}] 블로그 포스팅 + SNS 캡션 생성 중...` });
     try {
       const [blogPost, snsCaption, imagePrompt] = await Promise.all([
         generateBlogPost(sector),

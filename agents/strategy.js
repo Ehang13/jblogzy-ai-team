@@ -378,16 +378,22 @@ export async function run() {
   while (Date.now() < deadline) {
     console.log(`\n--- 사이클 ${cycle + 1} ---`);
 
-    const [auditData, memberStats, activeGoal, workflowStats] = await Promise.allSettled([
+    await send({ department: DEPARTMENT, task_type: '시스템 스캔', status: 'running',
+      summary: `[사이클 ${cycle + 1}] 운영 데이터 조회 중...` });
+
+    const results = await Promise.allSettled([
       fetchAuditData(),
       fetchMemberStats(),
       fetchActiveGoal(),
       fetchWorkflowStats(),
-    ]).then(results => results.map(r => r.status === 'fulfilled' ? r.value : null));
+    ]);
+    const [auditData, memberStats, activeGoal, workflowStats] =
+      results.map(r => r.status === 'fulfilled' ? r.value : null);
 
     if (!auditData) {
-      await notifyError(DEPARTMENT, '시스템 스캔', new Error('운영 데이터 조회 실패'));
-      if (IS_LONG_RUN) await new Promise(r => setTimeout(r, 5 * 60 * 1000)); // 5분 후 재시도
+      const auditErr = results[0].status === 'rejected' ? results[0].reason : new Error('운영 데이터 조회 실패');
+      await notifyError(DEPARTMENT, '시스템 스캔', auditErr);
+      if (IS_LONG_RUN) await new Promise(r => setTimeout(r, 5 * 60 * 1000));
       continue;
     }
 
@@ -396,6 +402,9 @@ export async function run() {
     const isFirstRun = !goal;
 
     console.log(`  → 유료 ${members.paid}명 / 체험 ${members.trial}명`);
+
+    await send({ department: DEPARTMENT, task_type: '시스템 스캔', status: 'running',
+      summary: `[사이클 ${cycle + 1}] 갭 분석 중... (유료 ${members.paid}명 / 체험 ${members.trial}명)` });
 
     // ── 1. 갭 스캔 (매 사이클) ─────────────────────────────────────────
     const gapScan = await askFast(`
@@ -448,6 +457,9 @@ ${workflowStats ? JSON.stringify(workflowStats, null, 2) : '데이터 없음'}
 
     // ── 3. 월요일 첫 사이클: 전체 주간 분석 ────────────────────────────
     if (isMonday && cycle === 0) {
+      await send({ department: DEPARTMENT, task_type: isFirstRun ? '최초 전략 계획 수립' : '주간 전략 진척도 검토',
+        status: 'running', summary: isFirstRun ? '최초 전략 계획서 작성 중...' : '주간 진척도 분석 중...' });
+
       const prompt = isFirstRun
         ? `
 당신은 jblogzy의 전략기획 총괄 임원입니다.
