@@ -4,28 +4,12 @@
 require_once __DIR__ . '/../config.php';
 
 function verifyApiKey(): void {
-    $headers = getallheaders();
+    $headers     = getallheaders();
     $providedKey = $headers['X-Api-Key'] ?? $_SERVER['HTTP_X_API_KEY'] ?? '';
 
-    if (empty($providedKey)) {
+    if (empty($providedKey) || $providedKey !== AGENT_API_KEY) {
         http_response_code(401);
-        echo json_encode(['error' => 'API key required']);
-        exit;
-    }
-
-    try {
-        $pdo = getDbConnection();
-        $stmt = $pdo->prepare('SELECT id FROM api_keys WHERE key_value = ? AND is_active = 1 LIMIT 1');
-        $stmt->execute([$providedKey]);
-
-        if (!$stmt->fetch()) {
-            http_response_code(403);
-            echo json_encode(['error' => 'Invalid API key']);
-            exit;
-        }
-    } catch (PDOException $e) {
-        http_response_code(500);
-        echo json_encode(['error' => 'DB connection failed']);
+        echo json_encode(['error' => 'Unauthorized']);
         exit;
     }
 }

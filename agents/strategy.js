@@ -361,12 +361,20 @@ if (process.argv[1].endsWith('파일명.js')) run().catch(console.error);
       '> 이 PR은 전략기획팀 AI가 자율적으로 생성했습니다. **반드시 코드 리뷰 후 머지**해주세요.',
     ].join('\n');
 
-    writeFileSync('/tmp/strategy-pr-body.md', prBody, 'utf8');
-
-    const prUrl = execSync(
-      `gh pr create --title "[전략기획팀] ${plan.title}" --body-file /tmp/strategy-pr-body.md --base main`,
-      { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] },
-    ).trim();
+    const repo  = process.env.GITHUB_REPOSITORY ?? 'Ehang13/jblogzy-ai-team';
+    const token = process.env.GITHUB_TOKEN;
+    const prRes = await fetch(`https://api.github.com/repos/${repo}/pulls`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `token ${token}`,
+        'Content-Type':  'application/json',
+        'Accept':        'application/vnd.github.v3+json',
+      },
+      body: JSON.stringify({ title: `[전략기획팀] ${plan.title}`, body: prBody, head: branch, base: 'main' }),
+    });
+    if (!prRes.ok) throw new Error(`GitHub API PR 생성 실패: ${prRes.status}`);
+    const prData = await prRes.json();
+    const prUrl  = prData.html_url;
 
     console.log(`  → PR 생성: ${prUrl}`);
     return { title: plan.title, rationale: plan.rationale, prUrl };

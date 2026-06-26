@@ -30,10 +30,20 @@ $stmtStat = $pdo->prepare('
 $stmtStat->execute([$dept, $today]);
 $stat = $stmtStat->fetch();
 
-// 최근 작업 로그 (50건)
+// 진행 중인 작업 (running)
+$stmtRunning = $pdo->prepare('
+    SELECT id, task_type, status, summary, created_at
+    FROM agent_tasks WHERE department=? AND status="running"
+    ORDER BY created_at DESC LIMIT 5
+');
+$stmtRunning->execute([$dept]);
+$runningLogs = $stmtRunning->fetchAll();
+
+// 최근 완료/오류 로그 (20건)
 $stmtLog = $pdo->prepare('
     SELECT id, task_type, status, summary, detail, content_url, created_at
-    FROM agent_tasks WHERE department=? ORDER BY created_at DESC LIMIT 50
+    FROM agent_tasks WHERE department=? AND status IN ("completed","error")
+    ORDER BY created_at DESC LIMIT 20
 ');
 $stmtLog->execute([$dept]);
 $logs = $stmtLog->fetchAll();
@@ -185,11 +195,38 @@ $statusBadge = [
     </div>
   </div>
 
-  <div class="row g-4">
+  <div class="row g-4 align-items-stretch" style="min-height:calc(100vh - 260px);">
 
-    <!-- 왼쪽: 작업 로그 -->
-    <div class="col-12 col-lg-5">
-      <div class="feed-container h-100">
+    <!-- 왼쪽: 진행 중인 작업 + 작업 로그 -->
+    <div class="col-12 col-lg-5 d-flex flex-column gap-3" style="min-height:0;">
+
+      <!-- ① 진행 중인 작업 -->
+      <div class="feed-container" style="max-height:200px;overflow-y:auto;flex-shrink:0;">
+        <h6 class="fw-bold mb-3 d-flex align-items-center gap-2">
+          <?php if (!empty($runningLogs)): ?>
+            <span class="running-dot"></span>
+          <?php endif; ?>
+          진행 중인 작업
+        </h6>
+        <?php if (empty($runningLogs)): ?>
+          <div class="text-muted small py-1">현재 실행 중인 작업이 없습니다.</div>
+        <?php else: ?>
+          <?php foreach ($runningLogs as $log): ?>
+            <div class="feed-item feed-running mb-2">
+              <div class="d-flex justify-content-between align-items-start">
+                <div class="flex-grow-1">
+                  <div class="small text-muted"><?= htmlspecialchars($log['task_type']) ?></div>
+                  <div class="mt-1 small"><?= htmlspecialchars($log['summary'] ?? '') ?></div>
+                </div>
+                <div class="small text-muted ms-2 text-nowrap"><?= timeAgo($log['created_at']) ?></div>
+              </div>
+            </div>
+          <?php endforeach; ?>
+        <?php endif; ?>
+      </div>
+
+      <!-- ② 최근 작업 로그 -->
+      <div class="feed-container" style="flex:1 1 0;overflow-y:auto;min-height:0;">
         <h6 class="fw-bold mb-3">최근 작업 로그</h6>
         <?php if (empty($logs)): ?>
           <div class="text-center text-muted py-4">아직 작업 기록이 없습니다.</div>
@@ -217,11 +254,12 @@ $statusBadge = [
           <?php endforeach; ?>
         <?php endif; ?>
       </div>
+
     </div>
 
     <!-- 오른쪽: 부서별 상세 -->
-    <div class="col-12 col-lg-7">
-      <div class="feed-container h-100">
+    <div class="col-12 col-lg-7 d-flex flex-column">
+      <div class="feed-container" style="flex:1 1 0;overflow-y:auto;min-height:0;">
 
         <?php if ($dept === 'sales'): ?>
 

@@ -146,15 +146,46 @@ $industryColors = [
     <?php endforeach; ?>
   </div>
 
-  <!-- 필터 -->
-  <div class="mb-3">
-    <?php foreach (['pending'=>'발송 대기','guess'=>'Gmail 추정','approved'=>'발송 승인','sent'=>'발송됨','replied'=>'응답 옴','all'=>'전체'] as $f => $label): ?>
-      <a href="?filter=<?= $f ?>"
-         class="btn btn-sm me-1 <?= $f === $filter ? 'btn-success' : 'btn-outline-secondary' ?>">
-        <?= $label ?>
-      </a>
-    <?php endforeach; ?>
+  <!-- 필터 + 일괄 승인 -->
+  <div class="mb-3 d-flex align-items-center gap-2 flex-wrap">
+    <div>
+      <?php foreach (['pending'=>'발송 대기','guess'=>'Gmail 추정','approved'=>'발송 승인','sent'=>'발송됨','replied'=>'응답 옴','all'=>'전체'] as $f => $label): ?>
+        <a href="?filter=<?= $f ?>"
+           class="btn btn-sm me-1 <?= $f === $filter ? 'btn-success' : 'btn-outline-secondary' ?>">
+          <?= $label ?>
+        </a>
+      <?php endforeach; ?>
+    </div>
+    <?php if ($filter === 'pending' && !empty($leads)): ?>
+    <button id="bulkApproveBtn" class="btn btn-sm btn-warning ms-2" onclick="bulkApproveLeads()">
+      ⚡ 전체 일괄 승인 (<?= $stats['pending_count'] ?>건)
+    </button>
+    <?php endif; ?>
   </div>
+
+  <script>
+  async function bulkApproveLeads() {
+    if (!confirm('대기 중인 리드 전체를 승인하시겠습니까?')) return;
+    const btn = document.getElementById('bulkApproveBtn');
+    btn.disabled = true;
+    btn.textContent = '처리 중...';
+    try {
+      const res  = await fetch('bulk_approve_leads.php', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        alert(`${data.approved}건 승인 완료!`);
+        location.reload();
+      } else {
+        alert('오류: ' + (data.error ?? '알 수 없는 오류'));
+        btn.disabled = false;
+        btn.textContent = '⚡ 전체 일괄 승인';
+      }
+    } catch (e) {
+      alert('네트워크 오류');
+      btn.disabled = false;
+    }
+  }
+  </script>
 
   <!-- 리드 테이블 -->
   <?php if (empty($leads)): ?>
