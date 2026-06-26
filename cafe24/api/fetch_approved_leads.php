@@ -13,7 +13,8 @@ try {
         SELECT id, industry, contact, email_subject, email_body
         FROM leads
         WHERE email_status = 'approved'
-        ORDER BY created_at ASC
+          AND (scheduled_send_at IS NULL OR scheduled_send_at <= NOW())
+        ORDER BY scheduled_send_at ASC, created_at ASC
         LIMIT 50
     ");
     $leads = $stmt->fetchAll();

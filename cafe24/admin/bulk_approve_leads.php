@@ -13,14 +13,25 @@ try {
     $pdo  = getDbConnection();
     $body = json_decode(file_get_contents('php://input'), true) ?? [];
     $scheduledAt = $body['scheduled_send_at'] ?? null;
-    if ($scheduledAt) {
-        $stmt = $pdo->prepare("UPDATE leads SET email_status='approved', scheduled_send_at=? WHERE email_status='pending'");
-        $stmt->execute([$scheduledAt]);
-    } else {
-        $stmt = $pdo->prepare("UPDATE leads SET email_status='approved' WHERE email_status='pending'");
-        $stmt->execute();
+
+    // 시간당 20건씩 분산 발송
+    $batchPerHour = 20;
+    $ids = $pdo->query("SELECT id FROM leads WHERE email_status='pending' ORDER BY id ASC")
+                ->fetchAll(PDO::FETCH_COLUMN);
+
+    $approved = 0;
+    $baseTime = new DateTime($scheduledAt ?: 'now');
+    $updateStmt = $pdo->prepare("UPDATE leads SET email_status='approved', scheduled_send_at=? WHERE id=?");
+
+    foreach ($ids as $i => $id) {
+        $hourOffset = (int)floor($i / $batchPerHour);
+        $sendTime   = clone $baseTime;
+        $sendTime->modify("+{$hourOffset} hours");
+        $updateStmt->execute([$sendTime->format('Y-m-d H:i:s'), $id]);
+        $approved++;
     }
-    echo json_encode(['success' => true, 'approved' => $stmt->rowCount()]);
+
+    echo json_encode(['success' => true, 'approved' => $approved]);
 } catch (PDOException $e) {
     http_response_code(500);
     echo json_encode(['error' => $e->getMessage()]);

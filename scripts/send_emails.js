@@ -16,8 +16,8 @@ function mdToHtml(text) {
 const API_BASE = process.env.CAFE24_API_URL.replace('/report.php', '');
 const API_KEY  = process.env.CAFE24_API_KEY;
 
-const BATCH_SIZE = 5;
-const DELAY_MS   = 90_000;
+const BATCH_SIZE = 20;   // 1회 최대 20건
+const DELAY_MS   = 60_000; // 건당 60초 간격
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
