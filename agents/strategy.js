@@ -132,6 +132,26 @@ async function setLastDevDate(dateStr) {
   } catch { /* ignore */ }
 }
 
+async function getSetting(key) {
+  try {
+    const res  = await fetch(`${CAFE24_API_BASE}/get_setting.php?key=${encodeURIComponent(key)}`, {
+      headers: { 'X-Api-Key': CAFE24_API_KEY },
+    });
+    const data = await res.json();
+    return data.value ?? null;
+  } catch { return null; }
+}
+
+async function setSetting(key, value) {
+  try {
+    await fetch(`${CAFE24_API_BASE}/set_setting.php`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Api-Key': CAFE24_API_KEY },
+      body:    JSON.stringify({ key, value }),
+    });
+  } catch { /* ignore */ }
+}
+
 // ── jblogzy 회원 현황 조회 ───────────────────────────────────────────────
 async function fetchMemberStats() {
   try {
@@ -447,35 +467,75 @@ ${recentErrors ? JSON.stringify(recentErrors, null, 2) : '조회 불가 (fetch_r
 ${workflowStats ? JSON.stringify(workflowStats, null, 2) : '데이터 없음'}
 
 지시:
-- 즉시 조치 필요한 [HIGH] 갭이 있으면: "[HIGH] <갭 설명>" 형식으로 나열
+갭을 반드시 아래 두 종류로 구분해서 태깅하라:
+
+[HIGH-INFRA]: 외부 서비스/인프라 문제 — 코드로 해결 불가, 관리자 직접 조치 필요
+  예) Anthropic API 크레딧 부족, 네이버 쿠키 만료, GitHub Actions 실패, DB 오류
+  → [HIGH-INFRA] 갭 발견 시 반드시 포함: 어떤 서비스인지 / 관리자가 해야 할 구체적 조치 / 영향 부서
+
+[HIGH-DEV]: 구현되지 않은 기능/로직 갭 — 코드 작성으로 해결 가능
+  예) 인스타그램 업로드 미구현, 특정 에이전트 기능 누락
+
+- 해당 갭이 있으면: "[HIGH-INFRA] <설명>" 또는 "[HIGH-DEV] <설명>" 형식으로 나열
 - 없으면 "🟢 정상 운영" 한 줄만 출력
-- 200자 이내
-`, 250);
+- 300자 이내
+`, 350);
 
-    const hasUrgent = gapScan.includes('[HIGH]');
-    console.log(`  → 갭 스캔: ${gapScan.slice(0, 100)}`);
+    const hasInfraGap = gapScan.includes('[HIGH-INFRA]');
+    const hasDevGap   = gapScan.includes('[HIGH-DEV]');
+    console.log(`  → 갭 스캔: ${gapScan.slice(0, 120)}`);
 
-    // ── 2. 긴급 갭 → 즉시 PR (하루 1회 제한) ──────────────────────────
-    if (hasUrgent) {
+    // ── 2a. 인프라 오류 → 관리자 이메일 즉시 발송 ─────────────────────
+    if (hasInfraGap) {
+      const prevHad = await getSetting('strategy_infra_gap_active');
+      if (prevHad !== 'true' && ADMIN_EMAIL) {
+        console.log('  → [HIGH-INFRA] 신규 감지: 관리자 이메일 발송');
+        await sendMail({
+          to:      ADMIN_EMAIL,
+          subject: '[AI팀 긴급] 인프라 오류 — 관리자 조치 필요',
+          html:    `<h2 style="color:#f87171">⚠️ 즉시 조치가 필요합니다</h2>${mdToHtml(gapScan)}`,
+          text:    `AI팀 인프라 오류 감지\n\n${gapScan}`,
+        }).catch(e => console.error('  → 이메일 발송 실패:', e.message));
+      }
+      await setSetting('strategy_infra_gap_active', 'true');
+    }
+
+    // ── 2b. 인프라 오류 해결 감지 → 해결됨 이메일 ──────────────────────
+    if (!hasInfraGap) {
+      const prevHad = await getSetting('strategy_infra_gap_active');
+      if (prevHad === 'true' && ADMIN_EMAIL) {
+        console.log('  → 인프라 오류 해결 감지: 해결됨 이메일 발송');
+        await sendMail({
+          to:      ADMIN_EMAIL,
+          subject: '[AI팀] 인프라 오류 해결 확인 ✅',
+          html:    '<h2 style="color:#4ade80">✅ 인프라 오류가 해결됐습니다.</h2><p>AI팀 정상 운영이 재개됩니다.</p>',
+          text:    'AI팀 인프라 오류가 해결됐습니다. 정상 운영 재개.',
+        }).catch(e => console.error('  → 이메일 발송 실패:', e.message));
+        await setSetting('strategy_infra_gap_active', 'false');
+      }
+    }
+
+    // ── 2c. 구현 갭 → 자율 개발 PR (하루 1회 제한) ─────────────────────
+    if (hasDevGap) {
       const lastDevDate = await getLastDevDate();
       const today       = new Date().toISOString().slice(0, 10);
       if (lastDevDate !== today) {
-        console.log('  → 긴급 갭 탐지: 자율 개발 시작');
+        console.log('  → [HIGH-DEV] 탐지: 자율 개발 시작');
         const devResult = await developFeature(gapScan);
         if (devResult) {
           await setLastDevDate(today);
           if (ADMIN_EMAIL) {
-            const prNote = `<p style="background:#1a2e1a;padding:10px;border-radius:6px;margin-bottom:1em">🛠 <strong>긴급 갭 수정 PR 생성됨</strong>: <a href="${devResult.prUrl}" style="color:#4ade80">${devResult.title}</a><br><small>${devResult.rationale}</small></p>`;
+            const prNote = `<p style="background:#1a2e1a;padding:10px;border-radius:6px;margin-bottom:1em">🛠 <strong>구현 갭 수정 PR 생성됨</strong>: <a href="${devResult.prUrl}" style="color:#4ade80">${devResult.title}</a><br><small>${devResult.rationale}</small></p>`;
             await sendMail({
               to:      ADMIN_EMAIL,
-              subject: `[전략기획팀 긴급] 갭 탐지 및 PR 생성: ${devResult.title}`,
+              subject: `[전략기획팀] 구현 갭 PR 생성: ${devResult.title}`,
               html:    prNote + '<hr>' + mdToHtml(gapScan),
               text:    `갭 탐지:\n${gapScan}\n\nPR: ${devResult.prUrl}`,
             }).catch(e => console.error('  → 이메일 발송 실패:', e.message));
           }
         }
       } else {
-        console.log('  → 긴급 갭 탐지: 오늘 이미 PR 생성됨 (건너뜀)');
+        console.log('  → [HIGH-DEV] 탐지: 오늘 이미 PR 생성됨 (건너뜀)');
       }
     }
 
