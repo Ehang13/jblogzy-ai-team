@@ -111,6 +111,34 @@ async function fetchAuditData() {
   return res.json();
 }
 
+// ── GitHub Actions 워크플로우 실행 통계 ──────────────────────────────────
+async function fetchWorkflowStats() {
+  if (!process.env.GITHUB_ACTIONS) return null;
+  try {
+    const raw  = execSync(
+      'gh run list --limit=28 --json workflowName,durationMs,conclusion',
+      { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] },
+    );
+    const runs = JSON.parse(raw);
+    const stats = {};
+    for (const run of runs) {
+      const name = run.workflowName;
+      if (!stats[name]) stats[name] = { count: 0, totalMs: 0, errors: 0 };
+      stats[name].count++;
+      if (run.durationMs) stats[name].totalMs += run.durationMs;
+      if (run.conclusion === 'failure') stats[name].errors++;
+    }
+    return Object.entries(stats).map(([name, s]) => ({
+      워크플로우: name,
+      평균소요분: Math.round(s.totalMs / s.count / 60000),
+      에러율: `${Math.round((s.errors / s.count) * 100)}%`,
+      샘플수: s.count,
+    }));
+  } catch {
+    return null;
+  }
+}
+
 // ── [비용발생] 태그 항목 파싱 ────────────────────────────────────────────
 function extractCostProposals(text) {
   const proposals = [];
@@ -172,11 +200,19 @@ ${weeklyReport}
 - 마케팅 블로그 자동 포스팅 + SNS 캡션 (agents/marketing.js)
 - 주간 전략 감사 리포트 + 비용 제안 승인 큐 (agents/strategy.js)
 
-## 구현 가능한 갭 예시 (이 외에도 자유롭게 제안)
-- 체험 만료 후 재가입 유도 이메일 (만료 3일 후 한 번)
-- 영업팀 업종별 리드 품질 분석 리포트 (주간)
+## 구현 가능한 갭 예시 (자유롭게 제안 가능)
+
+### 기능 갭
+- 체험 만료 후 재가입 유도 이메일 (만료 3일 후 한 번) → agents/trial-reengagement.js
+- 영업팀 업종별 리드 품질 분석 리포트 (주간) → agents/lead-quality-report.js
 - CHM 회원 위험도 재계산 + settings 업데이트
 - 마케팅 섹터별 포스팅 빈도 균형 모니터링
+
+### 시스템 갭
+- 특정 부서가 평균 실행시간 2배 초과 시 관리자 알림 → agents/workflow-monitor.js
+- 에러율 높은 워크플로우 자동 재시도 로직 → .github/workflows/*.yml 수정
+- 영업팀 중복 실행 감지 및 방지 (concurrency 그룹) → .github/workflows/sales.yml 수정
+- 실행 시간 추적 및 대시보드 기록 → agents/perf-tracker.js
 
 ## 제약
 - Node.js ESM, 기존 테이블만 (content_queue, leads, settings, agent_tasks)
@@ -187,7 +223,7 @@ ${weeklyReport}
 {
   "title": "기능명 (40자 이내)",
   "description": "기능 상세 설명과 동작 방식",
-  "target_file": "파일 경로 (예: agents/trial-reengagement.js)",
+  "target_file": "파일 경로 (agents/*.js 또는 .github/workflows/*.yml)",
   "rationale": "이 기능을 선택한 이유와 기대 효과"
 }
 `);
@@ -299,10 +335,11 @@ export async function run() {
 
   console.log(`\n🔍 [전략기획팀] ${isMonday ? '주간 전략 분석' : '일일 현황 점검'} 시작`);
 
-  const [auditData, memberStats, activeGoal] = await Promise.allSettled([
+  const [auditData, memberStats, activeGoal, workflowStats] = await Promise.allSettled([
     fetchAuditData(),
     fetchMemberStats(),
     fetchActiveGoal(),
+    fetchWorkflowStats(),
   ]).then(results => results.map(r => r.status === 'fulfilled' ? r.value : null));
 
   if (!auditData) {
@@ -415,6 +452,13 @@ ${JSON.stringify(auditData, null, 2)}
 ## AI팀 설계 현황
 ${JSON.stringify(AI_TEAM, null, 2)}
 
+## GitHub Actions 실행 통계 (최근 28회)
+${workflowStats ? JSON.stringify(workflowStats, null, 2) : '데이터 없음'}
+
+## 현재 실행 구조
+- 조간 번들(09:00 KST): 영업/마케팅/고객관리 병렬 동시 실행 → 전체 완료 후 전략기획팀 실행
+- 영업팀 추가 실행: 12:00, 16:00, 20:00 KST
+
 ---
 ## 작성 지침
 
@@ -428,10 +472,16 @@ ${JSON.stringify(AI_TEAM, null, 2)}
 ### 3. 이번 주 전술 조정
 - 각 부서에 이번 주 특별히 집중해야 할 것
 
-### 4. 개선 제안
+### 4. 시스템 효율성 검토
+- 부서별 평균 실행시간 중 이상치(평균 2배+)가 있는가
+- 에러율이 높은 워크플로우가 있는가
+- 현재 실행 구조에서 병목·중복·낭비가 있는가
+- 개선 가능한 구조적 변경 제안 (실행 순서, 병렬화, 불필요 중복 제거 등)
+
+### 5. 기능/시스템 개선 제안
 - [무료] 또는 [비용발생: 예상 규모] 태그 필수
 
-형식: 한국어, 600자 내외, 수치 직접 인용
+형식: 한국어, 800자 내외, 수치 직접 인용
 `;
 
   const report = await ask(prompt);
