@@ -1,200 +1,248 @@
 import 'dotenv/config';
-import { askFast } from '../core/claude.js';
+import { ask, askJson, askFast } from '../core/claude.js';
 import { send, notifyError } from '../core/reporter.js';
-import pg from 'pg';
-
-const { Pool } = pg;
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+import { createClient } from '@supabase/supabase-js';
+import cron from 'node-cron';
 
 const DEPARTMENT = 'chm';
-const IG_USER_ID = process.env.IG_USER_ID;
-const IG_ACCESS_TOKEN = process.env.IG_ACCESS_TOKEN;
-const IG_API_BASE = 'https://graph.facebook.com/v19.0';
-const MAX_PER_RUN = 5;
-const DELAY_MS = 2000;
+const TASK_TYPE = 'instagram_auto_upload';
+const BATCH_SIZE = 5;
 
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
+const INSTAGRAM_ACCESS_TOKEN = process.env.INSTAGRAM_ACCESS_TOKEN;
+const INSTAGRAM_BUSINESS_ACCOUNT_ID = process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID;
+const IG_API_BASE = 'https://graph.facebook.com/v19.0';
 
 async function createMediaContainer(imageUrl, caption) {
-  const url = `${IG_API_BASE}/${IG_USER_ID}/media`;
+  const url = `${IG_API_BASE}/${INSTAGRAM_BUSINESS_ACCOUNT_ID}/media`;
   const params = new URLSearchParams({
     image_url: imageUrl,
-    caption: caption || '',
-    access_token: IG_ACCESS_TOKEN,
+    caption: caption,
+    access_token: INSTAGRAM_ACCESS_TOKEN,
   });
 
   const res = await fetch(`${url}?${params.toString()}`, { method: 'POST' });
   const data = await res.json();
 
   if (!res.ok || data.error) {
-    throw new Error(`미디어 컨테이너 생성 실패: ${JSON.stringify(data.error || data)}`);
+    throw new Error(
+      data.error?.message || `미디어 컨테이너 생성 실패 (HTTP ${res.status})`
+    );
   }
 
   return data.id;
 }
 
 async function publishMediaContainer(containerId) {
-  const url = `${IG_API_BASE}/${IG_USER_ID}/media_publish`;
+  const url = `${IG_API_BASE}/${INSTAGRAM_BUSINESS_ACCOUNT_ID}/media_publish`;
   const params = new URLSearchParams({
     creation_id: containerId,
-    access_token: IG_ACCESS_TOKEN,
+    access_token: INSTAGRAM_ACCESS_TOKEN,
   });
 
   const res = await fetch(`${url}?${params.toString()}`, { method: 'POST' });
   const data = await res.json();
 
   if (!res.ok || data.error) {
-    throw new Error(`미디어 게시 실패: ${JSON.stringify(data.error || data)}`);
+    throw new Error(
+      data.error?.message || `미디어 게시 실패 (HTTP ${res.status})`
+    );
   }
 
   return data.id;
 }
 
-async function updateQueueStatus(client, id, status, note = null) {
-  await client.query(
-    `UPDATE content_queue
-     SET status = $1, updated_at = NOW(), note = $2
-     WHERE id = $3`,
-    [status, note, id]
-  );
+async function updateQueueStatus(id, status, errorMessage = null) {
+  const updateData = {
+    status,
+    updated_at: new Date().toISOString(),
+  };
+  if (errorMessage) {
+    updateData.error_message = errorMessage;
+  }
+  if (status === 'published') {
+    updateData.published_at = new Date().toISOString();
+  }
+
+  const { error } = await supabase
+    .from('content_queue')
+    .update(updateData)
+    .eq('id', id);
+
+  if (error) {
+    throw new Error(`content_queue 상태 업데이트 실패: ${error.message}`);
+  }
 }
 
-async function logAgentTask(client, { taskType, status, targetId, summary, detail }) {
-  await client.query(
-    `INSERT INTO agent_tasks (task_type, status, target_id, summary, detail, created_at)
-     VALUES ($1, $2, $3, $4, $5, NOW())`,
-    [taskType, status, targetId, summary, detail]
-  );
+async function recordAgentTask({ successCount, failCount, errors, details }) {
+  const { error } = await supabase.from('agent_tasks').insert({
+    task_type: TASK_TYPE,
+    department: DEPARTMENT,
+    status: failCount === 0 ? 'completed' : successCount === 0 ? 'failed' : 'partial',
+    success_count: successCount,
+    fail_count: failCount,
+    error_messages: errors.length > 0 ? errors : null,
+    detail: details,
+    executed_at: new Date().toISOString(),
+  });
+
+  if (error) {
+    console.error('agent_tasks 기록 실패:', error.message);
+  }
 }
 
 export async function run() {
-  const client = await pool.connect();
-  const results = { success: 0, failed: 0, items: [] };
+  console.log(`[${new Date().toISOString()}] Instagram 자동 업로드 에이전트 시작`);
+
+  let successCount = 0;
+  let failCount = 0;
+  const errors = [];
+  const details = [];
 
   try {
-    const { rows: queueItems } = await client.query(
-      `SELECT id, media_url, caption, created_at
-       FROM content_queue
-       WHERE status = 'approved'
-         AND platform = 'instagram'
-       ORDER BY created_at ASC
-       LIMIT $1`,
-      [MAX_PER_RUN]
-    );
+    // 1) approved 상태의 콘텐츠 배치 조회
+    const { data: queueItems, error: fetchError } = await supabase
+      .from('content_queue')
+      .select('*')
+      .eq('status', 'approved')
+      .order('created_at', { ascending: true })
+      .limit(BATCH_SIZE);
 
-    if (queueItems.length === 0) {
+    if (fetchError) {
+      throw new Error(`content_queue 조회 실패: ${fetchError.message}`);
+    }
+
+    if (!queueItems || queueItems.length === 0) {
+      console.log('업로드할 approved 항목이 없습니다.');
+      await recordAgentTask({
+        successCount: 0,
+        failCount: 0,
+        errors: [],
+        details: [{ message: '처리할 항목 없음' }],
+      });
       await send({
         department: DEPARTMENT,
-        task_type: 'instagram_uploader',
+        task_type: TASK_TYPE,
         status: 'completed',
-        summary: '처리할 인스타그램 콘텐츠가 없습니다.',
-        detail: '승인된(approved) 항목이 없어 이번 실행은 건너뜁니다.',
+        summary: 'Instagram 자동 업로드: 처리할 항목 없음',
+        detail: 'approved 상태의 콘텐츠가 없어 작업을 종료합니다.',
       });
       return;
     }
 
+    console.log(`총 ${queueItems.length}건 처리 시작`);
+
+    // 2~4) 각 항목 처리
     for (const item of queueItems) {
-      const { id, media_url, caption } = item;
-
       try {
-        if (!media_url) {
-          throw new Error('media_url이 비어 있습니다.');
-        }
+        console.log(`[${item.id}] 처리 중 - ${item.image_url}`);
 
-        // 1단계: 미디어 컨테이너 생성
-        const containerId = await createMediaContainer(media_url, caption);
+        // 2) 미디어 컨테이너 생성
+        const containerId = await createMediaContainer(item.image_url, item.caption || '');
+        console.log(`[${item.id}] 컨테이너 생성 완료: ${containerId}`);
 
-        // 2단계: 게시
-        const publishedId = await publishMediaContainer(containerId);
+        // 컨테이너 준비 대기 (짧은 딜레이)
+        await new Promise((resolve) => setTimeout(resolve, 3000));
 
-        // 상태 업데이트: published
-        await updateQueueStatus(client, id, 'published', `instagram_media_id: ${publishedId}`);
+        // 3) 실제 게시
+        const postId = await publishMediaContainer(containerId);
+        console.log(`[${item.id}] 게시 완료: ${postId}`);
 
-        // agent_tasks 로그
-        await logAgentTask(client, {
-          taskType: 'instagram_uploader',
-          status: 'success',
-          targetId: String(id),
-          summary: `인스타그램 게시 성공 (queue_id: ${id})`,
-          detail: JSON.stringify({ containerId, publishedId, media_url, caption }),
+        // 4) 성공 상태 업데이트
+        await updateQueueStatus(item.id, 'published');
+        successCount++;
+        details.push({
+          id: item.id,
+          status: 'published',
+          instagram_post_id: postId,
         });
-
-        results.success++;
-        results.items.push({ id, status: 'published', publishedId });
-
-        // Rate limit 대응 딜레이
-        await sleep(DELAY_MS);
       } catch (itemError) {
-        // 개별 항목 실패 처리 — 프로세스 중단 없이 건너뜀
-        const errMsg = itemError.message || String(itemError);
+        console.error(`[${item.id}] 처리 실패:`, itemError.message);
 
+        // 에러 발생 시 해당 항목 건너뜀 (프로세스 중단 없음)
         try {
-          await updateQueueStatus(client, id, 'failed', errMsg);
-          await logAgentTask(client, {
-            taskType: 'instagram_uploader',
-            status: 'error',
-            targetId: String(id),
-            summary: `인스타그램 게시 실패 (queue_id: ${id})`,
-            detail: errMsg,
-          });
-        } catch (dbErr) {
-          await notifyError(dbErr, { context: `DB 업데이트 실패 (queue_id: ${id})` });
+          await updateQueueStatus(item.id, 'failed', itemError.message);
+        } catch (updateError) {
+          console.error(`[${item.id}] 상태 업데이트 실패:`, updateError.message);
         }
 
-        await notifyError(itemError, {
-          context: `instagram_uploader - queue_id: ${id}`,
-          media_url,
+        failCount++;
+        errors.push({ id: item.id, error: itemError.message });
+        details.push({
+          id: item.id,
+          status: 'failed',
+          error: itemError.message,
         });
 
-        results.failed++;
-        results.items.push({ id, status: 'failed', error: errMsg });
-
-        await sleep(DELAY_MS);
+        notifyError({
+          department: DEPARTMENT,
+          task_type: TASK_TYPE,
+          error: itemError,
+          context: { queue_id: item.id, image_url: item.image_url },
+        });
       }
     }
 
-    // AI 요약 생성
-    const summaryPrompt = `
-인스타그램 자동 업로드 실행 결과를 한 문장으로 간결하게 요약해 주세요.
-- 총 처리: ${results.success + results.failed}건
-- 성공: ${results.success}건
-- 실패: ${results.failed}건
-단언적 표현("확정", "보장", "100%")은 사용하지 마세요.
-`.trim();
+    // 5) agent_tasks 기록
+    await recordAgentTask({ successCount, failCount, errors, details });
 
-    let aiSummary = `인스타그램 업로드 완료 — 성공 ${results.success}건, 실패 ${results.failed}건`;
-    try {
-      aiSummary = await askFast(summaryPrompt, 100);
-    } catch (_) {
-      // AI 요약 실패는 무시
-    }
+    // 결과 요약 리포트
+    const summaryText = `Instagram 자동 업로드 완료 - 성공: ${successCount}건, 실패: ${failCount}건`;
+    const detailText =
+      details.map((d) => `- [${d.id}] ${d.status}${d.error ? ` (오류: ${d.error})` : `${d.instagram_post_id ? ` (PostID: ${d.instagram_post_id})` : ''}`}`).join('\n');
 
     await send({
       department: DEPARTMENT,
-      task_type: 'instagram_uploader',
-      status: results.failed > 0 && results.success === 0 ? 'error' : 'completed',
-      summary: aiSummary,
-      detail: JSON.stringify({
-        total: results.success + results.failed,
-        success: results.success,
-        failed: results.failed,
-        items: results.items,
-      }),
+      task_type: TASK_TYPE,
+      status: failCount === 0 ? 'completed' : 'error',
+      summary: summaryText,
+      detail: detailText,
+      success_count: successCount,
+      fail_count: failCount,
     });
+
+    console.log(`[${new Date().toISOString()}] 에이전트 종료 - ${summaryText}`);
   } catch (fatalError) {
-    await notifyError(fatalError, { context: 'instagram_uploader - 치명적 오류' });
+    console.error('에이전트 치명적 오류:', fatalError.message);
+
+    await recordAgentTask({
+      successCount,
+      failCount: failCount + 1,
+      errors: [...errors, { fatal: fatalError.message }],
+      details,
+    });
+
+    notifyError({
+      department: DEPARTMENT,
+      task_type: TASK_TYPE,
+      error: fatalError,
+      context: { phase: 'fatal' },
+    });
+
     await send({
       department: DEPARTMENT,
-      task_type: 'instagram_uploader',
+      task_type: TASK_TYPE,
       status: 'error',
-      summary: '인스타그램 업로더 실행 중 치명적 오류 발생',
-      detail: fatalError.message || String(fatalError),
+      summary: `Instagram 자동 업로드 치명적 오류: ${fatalError.message}`,
+      detail: fatalError.stack || fatalError.message,
     });
-  } finally {
-    client.release();
   }
 }
+
+// 6) 일 2회 스케줄 (09:00, 18:00 KST = UTC+9)
+// cron: KST 09:00 = UTC 00:00 / KST 18:00 = UTC 09:00
+cron.schedule('0 0 * * *', () => {
+  console.log('[스케줄] KST 09:00 실행');
+  run().catch(console.error);
+});
+
+cron.schedule('0 9 * * *', () => {
+  console.log('[스케줄] KST 18:00 실행');
+  run().catch(console.error);
+});
 
 if (process.argv[1].endsWith('instagram-uploader.js')) run().catch(console.error);
