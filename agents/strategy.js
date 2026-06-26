@@ -100,6 +100,17 @@ async function fetchActiveGoal() {
   }
 }
 
+// ── 최근 에러 로그 조회 (전 부서) ───────────────────────────────────────
+async function fetchRecentErrors() {
+  try {
+    const res = await fetch(`${CAFE24_API_BASE}/fetch_recent_errors.php?limit=20`, {
+      headers: { 'X-Api-Key': CAFE24_API_KEY },
+    });
+    if (!res.ok) return null;
+    return res.json();
+  } catch { return null; }
+}
+
 // ── 자율 개발 날짜 추적 (하루 1회 PR 제한) ──────────────────────────────
 async function getLastDevDate() {
   try {
@@ -386,15 +397,17 @@ export async function run() {
       fetchMemberStats(),
       fetchActiveGoal(),
       fetchWorkflowStats(),
+      fetchRecentErrors(),
     ]);
-    const [auditData, memberStats, activeGoal, workflowStats] =
+    const [auditData, memberStats, activeGoal, workflowStats, recentErrors] =
       results.map(r => r.status === 'fulfilled' ? r.value : null);
 
-    if (!auditData) {
-      const auditErr = results[0].status === 'rejected' ? results[0].reason : new Error('운영 데이터 조회 실패');
-      await notifyError(DEPARTMENT, '시스템 스캔', auditErr);
-      if (IS_LONG_RUN) await new Promise(r => setTimeout(r, 5 * 60 * 1000));
-      continue;
+    const auditErrMsg = results[0].status === 'rejected'
+      ? results[0].reason?.message ?? '알 수 없는 오류'
+      : null;
+
+    if (auditErrMsg) {
+      await notifyError(DEPARTMENT, '운영 데이터 조회', new Error(auditErrMsg));
     }
 
     const members    = memberStats ?? { total: '조회 실패', paid: 0, trial: 0, expired: 0 };
@@ -414,7 +427,10 @@ export async function run() {
 ${JSON.stringify(AI_TEAM, null, 2)}
 
 ## 최근 운영 통계
-${JSON.stringify(auditData, null, 2)}
+${auditData ? JSON.stringify(auditData, null, 2) : `조회 실패: ${auditErrMsg}`}
+
+## 최근 에러 로그 (전 부서, 최근 20건)
+${recentErrors ? JSON.stringify(recentErrors, null, 2) : '조회 불가 (fetch_recent_errors.php 미설치 또는 서버 오류)'}
 
 ## 회원 현황
 유료 ${members.paid}명 / 체험 ${members.trial}명
