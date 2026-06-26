@@ -13,56 +13,77 @@ permissions:
   contents: write
   pull-requests: write
 
+env:
+  ANTHROPIC_API_KEY:   ${{ secrets.ANTHROPIC_API_KEY }}
+  CAFE24_API_URL:      ${{ secrets.CAFE24_API_URL }}
+  CAFE24_API_KEY:      ${{ secrets.CAFE24_API_KEY }}
+  NAVER_CLIENT_ID:     ${{ secrets.NAVER_CLIENT_ID }}
+  NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+  JBLOGZY_API_URL:     ${{ secrets.JBLOGZY_API_URL }}
+  JBLOGZY_API_KEY:     ${{ secrets.JBLOGZY_API_KEY }}
+  SMTP_HOST:           ${{ secrets.SMTP_HOST }}
+  SMTP_PORT:           ${{ secrets.SMTP_PORT }}
+  SMTP_SECURE:         ${{ secrets.SMTP_SECURE }}
+  SMTP_USER:           ${{ secrets.SMTP_USER }}
+  SMTP_PASS:           ${{ secrets.SMTP_PASS }}
+  EMAIL_FROM:          ${{ secrets.EMAIL_FROM }}
+  EMAIL_FROM_NAME:     ${{ secrets.EMAIL_FROM_NAME }}
+  GITHUB_TOKEN:        ${{ secrets.GITHUB_TOKEN }}
+
 jobs:
-  run:
+  sales:
+    name: 영업팀
     runs-on: ubuntu-latest
-    timeout-minutes: 120
-
-    env:
-      ANTHROPIC_API_KEY:   ${{ secrets.ANTHROPIC_API_KEY }}
-      CAFE24_API_URL:      ${{ secrets.CAFE24_API_URL }}
-      CAFE24_API_KEY:      ${{ secrets.CAFE24_API_KEY }}
-      NAVER_CLIENT_ID:     ${{ secrets.NAVER_CLIENT_ID }}
-      NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
-      JBLOGZY_API_URL:     ${{ secrets.JBLOGZY_API_URL }}
-      JBLOGZY_API_KEY:     ${{ secrets.JBLOGZY_API_KEY }}
-      SMTP_HOST:           ${{ secrets.SMTP_HOST }}
-      SMTP_PORT:           ${{ secrets.SMTP_PORT }}
-      SMTP_SECURE:         ${{ secrets.SMTP_SECURE }}
-      SMTP_USER:           ${{ secrets.SMTP_USER }}
-      SMTP_PASS:           ${{ secrets.SMTP_PASS }}
-      EMAIL_FROM:          ${{ secrets.EMAIL_FROM }}
-      EMAIL_FROM_NAME:     ${{ secrets.EMAIL_FROM_NAME }}
-      GITHUB_TOKEN:        ${{ secrets.GITHUB_TOKEN }}
-
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
+      - run: npm ci
+      - run: npx playwright install chromium
+      - run: node agents/sales.js
 
-      - name: 의존성 설치
-        run: npm ci
+  marketing:
+    name: 마케팅팀
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: node agents/marketing.js
 
-      - name: Playwright 설치 (영업팀)
-        run: npx playwright install chromium
+  chm:
+    name: 고객관리팀
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: node agents/chm.js
 
-      - name: 영업팀
-        continue-on-error: true
-        run: node agents/sales.js
-
-      - name: 마케팅팀
-        continue-on-error: true
-        run: node agents/marketing.js
-
-      - name: 고객관리팀
-        continue-on-error: true
-        run: node agents/chm.js
-
-      - name: 전략기획팀
-        continue-on-error: true
-        run: node agents/strategy.js
+  strategy:
+    name: 전략기획팀
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [sales, marketing, chm]
+    if: always()   # 다른 부서가 실패해도 전략기획팀은 실행
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: node agents/strategy.js
