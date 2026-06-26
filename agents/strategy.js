@@ -45,9 +45,11 @@ const AI_TEAM = {
   영업팀: {
     역할: '네이버 플레이스에서 잠재 고객 발굴 → 이메일 초안 생성',
     총업종수: ALL_INDUSTRIES.length,
-    하루실행횟수: 4,
+    하루실행횟수: 5,
+    실행시각_KST: ['08:00(sales.yml)', '09:00(morning-bundle)', '12:00', '16:00', '20:00'],
     실행당처리업종: ALL_INDUSTRIES.length,
     업종당리드수: 5,
+    지역선택방식: '3시간 단위 슬롯 × 연중 일수 조합 → 실행마다 다른 지역 순환 (40개 지역)',
     총지역수: ALL_REGIONS.length,
     이메일유형: ['naver.com (pending)', 'gmail.com (guess — 추정 주소)'],
     현재문제점: '이메일 발송 후 답장 여부·전환 여부 추적 불가',

@@ -71,14 +71,14 @@ function pickTodaysIndustries() {
   return [...ALL_INDUSTRIES]; // 매 실행마다 전체 18개
 }
 
-function dayOfYearKST() {
-  const kst = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
-  const start = new Date(kst.getFullYear(), 0, 0);
-  return Math.floor((kst - start) / 86400000);
-}
-
 function pickTodaysRegion() {
-  return ALL_REGIONS[dayOfYearKST() % ALL_REGIONS.length];
+  // 날짜(연중 일수) × 8 + 3시간 단위 슬롯 → 실행마다 다른 지역 순환
+  // KST 08시→슬롯2, 09시→슬롯3, 12시→슬롯4, 16시→슬롯5, 20시→슬롯6
+  const kst     = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
+  const start   = new Date(kst.getFullYear(), 0, 0);
+  const daySlot = Math.floor((kst - start) / 86400000);
+  const hourSlot = Math.floor(kst.getHours() / 3);
+  return ALL_REGIONS[(daySlot * 8 + hourSlot) % ALL_REGIONS.length];
 }
 
 // ─────────────────────────────────────────────
