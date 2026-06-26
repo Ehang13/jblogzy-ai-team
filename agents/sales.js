@@ -8,7 +8,7 @@ import { send, notifyStart, notifyError } from '../core/reporter.js';
 import { chromium } from 'playwright';
 
 const DEPARTMENT = 'sales';
-const LEADS_PER_INDUSTRY = 5;
+const INDUSTRIES_PER_RUN = 3;
 
 // ─────────────────────────────────────────────
 // 전체 업종 리스트 (15개)
@@ -68,7 +68,14 @@ async function isSalesAutoApproveEnabled() {
 // 날짜 기반 결정론적 순환 (파일 불필요 → GitHub Actions 호환)
 // ─────────────────────────────────────────────
 function pickTodaysIndustries() {
-  return [...ALL_INDUSTRIES]; // 매 실행마다 전체 18개
+  // 실행마다 3개 업종 순환 → 하루 5회 × 3업종 = 2일이면 전 업종 커버
+  const kst      = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
+  const start    = new Date(kst.getFullYear(), 0, 0);
+  const daySlot  = Math.floor((kst - start) / 86400000);
+  const hourSlot = Math.floor(kst.getHours() / 3);
+  const totalSlots = Math.ceil(ALL_INDUSTRIES.length / INDUSTRIES_PER_RUN);
+  const slot     = (daySlot * 8 + hourSlot) % totalSlots;
+  return ALL_INDUSTRIES.slice(slot * INDUSTRIES_PER_RUN, (slot + 1) * INDUSTRIES_PER_RUN);
 }
 
 function pickTodaysRegion() {
@@ -103,10 +110,26 @@ async function getPlaceIdsFromSearch(page, query) {
     `https://map.naver.com/p/search/${encodeURIComponent(query)}`,
     { waitUntil: 'domcontentloaded', timeout: 20000 }
   );
-  await page.waitForTimeout(5000);
-  page.off('response', handler);
+  await page.waitForTimeout(4000);
 
-  return [...placeIds].slice(0, 20);
+  // 다음 페이지 버튼을 끝까지 클릭하며 전체 업체 수집
+  for (let pageNum = 2; pageNum <= 20; pageNum++) {
+    const nextBtn = page.locator([
+      'a[aria-label="다음 페이지"]',
+      '.place_btn_paging a:last-child',
+      'button.eUTV2:last-child',
+      '.pagination a:last-child',
+    ].join(', ')).first();
+    const visible = await nextBtn.isVisible({ timeout: 2000 }).catch(() => false);
+    if (!visible) break;
+    await nextBtn.click();
+    await page.waitForTimeout(3000);
+    console.log(`    → 페이지 ${pageNum} 로드 (누적 ${placeIds.size}개)`);
+  }
+
+  page.off('response', handler);
+  console.log(`    → 총 ${placeIds.size}개 place ID 수집`);
+  return [...placeIds];
 }
 
 // 블로그 URL에서 blog ID 추출
@@ -197,8 +220,6 @@ async function discoverLeads(browser, industry, region) {
   const seenBlogIds = new Set();
 
   for (const placeId of placeIds) {
-    if (leads.length >= LEADS_PER_INDUSTRY) break;
-
     const result = await getBlogIdFromPlace(page, placeId);
     if (!result?.blogId || seenBlogIds.has(result.blogId)) continue;
     seenBlogIds.add(result.blogId);
