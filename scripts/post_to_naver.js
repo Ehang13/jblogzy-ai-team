@@ -5,9 +5,9 @@ import { chromium } from 'playwright';
 
 const WRITE_URL = (id) => `https://blog.naver.com/${id}/postwrite`;
 
-// 쿠키 복원 (base64 또는 raw JSON 모두 지원)
-async function restoreCookies(context) {
-  const raw = process.env.NAVER_COOKIES;
+// 쿠키 복원 (base64 또는 raw JSON 모두 지원, cookiesOverride 우선)
+async function restoreCookies(context, cookiesOverride) {
+  const raw = cookiesOverride ?? process.env.NAVER_COOKIES;
   if (!raw) throw new Error('NAVER_COOKIES 환경변수가 없습니다');
   const json = raw.trim().startsWith('[')
     ? raw
@@ -455,7 +455,7 @@ async function clickPublish(page, screenshotDir) {
 // ─────────────────────────────────────────────
 // 메인 export
 // ─────────────────────────────────────────────
-export async function postToNaverBlog({ title, content, tags = [], blogId }) {
+export async function postToNaverBlog({ title, content, tags = [], blogId, cookies }) {
   if (!blogId) throw new Error('NAVER_BLOG_ID 환경변수가 없습니다');
 
   // 스크린샷 저장 디렉토리 (GitHub Actions artifacts 업로드용)
@@ -511,7 +511,7 @@ export async function postToNaverBlog({ title, content, tags = [], blogId }) {
       }
     });
 
-    await restoreCookies(context);
+    await restoreCookies(context, cookies ?? null);
     const page = await context.newPage();
 
     // 발행 관련 네트워크 응답 모니터링

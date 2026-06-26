@@ -148,6 +148,7 @@ function timeAgo(string $datetime): string {
       <?php endif; ?>
     </a>
     <a href="leads.php" class="btn btn-sm btn-outline-success">리드 현황</a>
+    <a href="accounts.php" class="btn btn-sm btn-outline-light">🔑 계정 관리</a>
     <span class="text-muted small" id="last-updated">마지막 갱신: 방금 전</span>
     <a href="?logout=1" class="btn btn-sm btn-outline-secondary">로그아웃</a>
   </div>

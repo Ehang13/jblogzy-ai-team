@@ -8,8 +8,29 @@ import { send, notifyError } from '../core/reporter.js';
 import { postToNaverBlog } from './post_to_naver.js';
 import { ALL_INDUSTRIES } from '../agents/sales.js';
 
-const BLOG_ID  = process.env.NAVER_BLOG_ID;
-const DEPT     = 'marketing';
+const DEPT         = 'marketing';
+const CAFE24_BASE  = (process.env.CAFE24_API_URL ?? '').replace('/report.php', '');
+const CAFE24_KEY   = process.env.CAFE24_API_KEY ?? '';
+
+async function fetchNaverAccount() {
+  try {
+    const res = await fetch(`${CAFE24_BASE}/get_naver_account.php`, {
+      headers: { 'X-Api-Key': CAFE24_KEY },
+    });
+    const data = await res.json();
+    return data.account ?? null;
+  } catch { return null; }
+}
+
+async function reportAccountResult(id, success, error) {
+  try {
+    await fetch(`${CAFE24_BASE}/update_naver_account.php`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Api-Key': CAFE24_KEY },
+      body:    JSON.stringify({ id, success, error: error ?? null }),
+    });
+  } catch {}
+}
 
 // 하루 3회 실행 → 각 실행마다 다른 업종 (날짜 × 실행 시간으로 인덱스 결정)
 function pickIndustry() {
@@ -90,14 +111,22 @@ function parsePost(raw) {
 // ─────────────────────────────────────────────
 console.log('\n📝 [네이버 마케팅] 자동 포스팅 시작');
 
+// DB 계정 조회 (없으면 env 폴백)
+const account = await fetchNaverAccount();
+const BLOG_ID = account?.blog_id ?? process.env.NAVER_BLOG_ID;
+const COOKIES = account?.cookies ?? null; // null이면 post_to_naver.js가 env 사용
+
 if (!BLOG_ID) {
-  console.error('NAVER_BLOG_ID 환경변수가 없습니다');
+  console.error('NAVER_BLOG_ID 환경변수가 없고 DB 등록 계정도 없습니다');
   process.exit(1);
 }
-if (!process.env.NAVER_COOKIES) {
-  console.error('NAVER_COOKIES 환경변수가 없습니다');
+if (!COOKIES && !process.env.NAVER_COOKIES) {
+  console.error('NAVER_COOKIES 환경변수가 없고 DB 등록 계정도 없습니다');
   process.exit(1);
 }
+
+if (account) console.log(`  계정: ${BLOG_ID} (DB 등록 계정)`);
+else          console.log(`  계정: ${BLOG_ID} (env 폴백)`);
 
 const industry = pickIndustry();
 console.log(`  오늘 업종: ${industry.name}`);
@@ -110,9 +139,10 @@ try {
 
   // 2. 네이버 블로그 발행
   console.log('  네이버 블로그 발행 중...');
-  const result = await postToNaverBlog({ title, content: body, tags, blogId: BLOG_ID });
+  const result = await postToNaverBlog({ title, content: body, tags, blogId: BLOG_ID, cookies: COOKIES });
 
   if (result.success) {
+    if (account) await reportAccountResult(account.id, true, null);
     // 3. 카페24 대시보드 기록
     await send({
       department:      DEPT,
@@ -128,6 +158,7 @@ try {
     });
     console.log(`\n✅ 발행 완료: ${result.url || '(URL 확인 필요)'}`);
   } else {
+    if (account) await reportAccountResult(account.id, false, result.error);
     throw new Error(result.error);
   }
 
