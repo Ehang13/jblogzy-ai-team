@@ -18,7 +18,7 @@ if ($id <= 0) {
     http_response_code(400); echo json_encode(['error' => 'invalid id']); exit;
 }
 
-$allowed = ['status', 'plan', 'dept_instructions', 'progress_notes', 'result_report', 'completed_at'];
+$allowed = ['title', 'description', 'target_departments', 'status', 'plan', 'dept_instructions', 'progress_notes', 'result_report', 'completed_at'];
 $sets    = [];
 $params  = [];
 

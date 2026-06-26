@@ -128,6 +128,10 @@ function timeAgo(string $datetime): string {
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
   <link rel="stylesheet" href="assets/style.css">
+  <style>
+    #dir-title::placeholder, #dir-body::placeholder { color: #64748b; }
+    #dir-title, #dir-body { color: #e2e8f0 !important; }
+  </style>
 </head>
 <body>
 
@@ -269,24 +273,79 @@ function timeAgo(string $datetime): string {
             <div class="flex-grow-1">
               <span class="badge me-2" style="background:<?= $sc ?>"><?= $sl ?></span>
               <span class="small fw-semibold"><?= htmlspecialchars($dir['title']) ?></span>
-              <?php if (!empty($dir['plan'])): ?>
-              <div class="small text-muted mt-1">
-                📋 <?= htmlspecialchars(mb_strimwidth($dir['plan'], 0, 150, '...')) ?>
-              </div>
-              <?php endif; ?>
-              <?php if (!empty($dir['progress_notes'])): ?>
-              <div class="small mt-1" style="color:#93c5fd">
-                🔄 <?= htmlspecialchars(mb_strimwidth(trim($dir['progress_notes']), 0, 150, '...')) ?>
-              </div>
-              <?php endif; ?>
             </div>
-            <div class="d-flex flex-column align-items-end gap-1 ms-3 flex-shrink-0">
+            <div class="d-flex align-items-center gap-2 ms-3 flex-shrink-0">
               <span class="small text-muted text-nowrap"><?= timeAgo($dir['created_at']) ?></span>
+              <button class="btn btn-sm btn-outline-info py-0"
+                onclick="toggleDirectiveDetail(<?= (int)$dir['id'] ?>)">상세 보기</button>
+              <button class="btn btn-sm btn-outline-warning py-0"
+                onclick="toggleDirectiveEdit(<?= (int)$dir['id'] ?>)">수정</button>
               <?php if ($dir['status'] !== 'completed'): ?>
               <button class="btn btn-sm btn-outline-success py-0"
                 onclick="completeDirective(<?= (int)$dir['id'] ?>, this)">완료</button>
               <?php endif; ?>
             </div>
+          </div>
+          <!-- 상세 보기 패널 -->
+          <div id="ddetail-<?= (int)$dir['id'] ?>" style="display:none;margin-top:12px;border-top:1px solid #334155;padding-top:12px">
+            <?php if (!empty($dir['plan'])): ?>
+            <div class="mb-3">
+              <div class="small fw-semibold mb-1" style="color:#93c5fd">📋 실행 계획</div>
+              <div class="small" style="color:#cbd5e1;white-space:pre-wrap"><?= htmlspecialchars($dir['plan']) ?></div>
+            </div>
+            <?php endif; ?>
+            <?php
+              $deptInstructions = json_decode($dir['dept_instructions'] ?? '{}', true) ?? [];
+              $deptNames = ['sales'=>'영업팀','marketing'=>'마케팅팀','chm'=>'고객관리팀'];
+            ?>
+            <?php if (!empty($deptInstructions)): ?>
+            <div class="mb-3">
+              <div class="small fw-semibold mb-1" style="color:#86efac">📌 부서별 지시</div>
+              <?php foreach ($deptInstructions as $dk => $di): ?>
+              <div class="small mb-1"><span class="badge bg-secondary me-1"><?= $deptNames[$dk] ?? $dk ?></span><span style="color:#cbd5e1"><?= htmlspecialchars($di) ?></span></div>
+              <?php endforeach; ?>
+            </div>
+            <?php endif; ?>
+            <?php if (!empty($dir['progress_notes'])): ?>
+            <div class="mb-2">
+              <div class="small fw-semibold mb-1" style="color:#fbbf24">🔄 진행 메모</div>
+              <div class="small" style="color:#cbd5e1;white-space:pre-wrap"><?= htmlspecialchars(trim($dir['progress_notes'])) ?></div>
+            </div>
+            <?php endif; ?>
+            <?php if (empty($dir['plan']) && empty($deptInstructions) && empty($dir['progress_notes'])): ?>
+            <div class="small text-muted">전략기획팀이 아직 처리하지 않았습니다. 다음 사이클(최대 30분)에 계획이 수립됩니다.</div>
+            <?php endif; ?>
+          </div>
+          <!-- 수정 패널 -->
+          <?php
+            $editDepts = json_decode($dir['target_departments'] ?? '[]', true) ?? [];
+          ?>
+          <div id="dedit-<?= (int)$dir['id'] ?>" style="display:none;margin-top:12px;border-top:1px solid #334155;padding-top:12px">
+            <div class="mb-2">
+              <input type="text" id="dedit-title-<?= (int)$dir['id'] ?>"
+                     class="form-control form-control-sm"
+                     value="<?= htmlspecialchars($dir['title']) ?>"
+                     style="background:#0f172a;border-color:#475569;color:#e2e8f0">
+            </div>
+            <div class="mb-2">
+              <textarea id="dedit-body-<?= (int)$dir['id'] ?>"
+                        class="form-control form-control-sm" rows="3"
+                        style="background:#0f172a;border-color:#475569;color:#e2e8f0;resize:vertical"><?= htmlspecialchars($dir['description'] ?? '') ?></textarea>
+            </div>
+            <div class="mb-3">
+              <div class="small text-muted mb-1">대상 부서 (선택 안 하면 전 부서)</div>
+              <div class="d-flex gap-3">
+                <?php foreach(['sales'=>'영업팀','marketing'=>'마케팅팀','chm'=>'고객관리팀'] as $k=>$n): ?>
+                <label class="small d-flex align-items-center gap-1" style="cursor:pointer">
+                  <input type="checkbox" class="dedit-dept-<?= (int)$dir['id'] ?>" value="<?= $k ?>"
+                    <?= in_array($k, $editDepts) ? 'checked' : '' ?>> <?= $n ?>
+                </label>
+                <?php endforeach; ?>
+              </div>
+            </div>
+            <div class="small text-muted mb-2">저장 시 전략기획팀이 다음 사이클에 재처리합니다.</div>
+            <button class="btn btn-sm btn-warning" onclick="saveDirective(<?= (int)$dir['id'] ?>)">저장</button>
+            <button class="btn btn-sm btn-outline-secondary ms-2" onclick="toggleDirectiveEdit(<?= (int)$dir['id'] ?>)">취소</button>
           </div>
         </div>
       <?php endforeach; ?>
@@ -384,6 +443,45 @@ function timeAgo(string $datetime): string {
 <script src="assets/dashboard.js"></script>
 <script>
 const API_BASE = '<?= htmlspecialchars(rtrim(str_replace('/admin', '', (isset($_SERVER['HTTPS']) ? 'https' : 'http') . '://' . $_SERVER['HTTP_HOST'] . dirname(dirname($_SERVER['REQUEST_URI']))), '/')) ?>/api';
+
+function toggleDirectiveEdit(id) {
+  const el = document.getElementById('dedit-' + id);
+  if (!el) return;
+  const isOpen = el.style.display !== 'none';
+  el.style.display = isOpen ? 'none' : 'block';
+}
+
+async function saveDirective(id) {
+  const title = document.getElementById('dedit-title-' + id)?.value.trim();
+  const body  = document.getElementById('dedit-body-'  + id)?.value.trim();
+  const depts = [...document.querySelectorAll(`.dedit-dept-${id}:checked`)].map(c => c.value);
+  if (!title) { alert('제목을 입력해주세요'); return; }
+  try {
+    const res  = await fetch(API_BASE + '/update_directive.php', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        id,
+        title,
+        description:         body,
+        target_departments:  depts.length ? depts : null,
+        status:              'open',
+      }),
+    });
+    const data = await res.json();
+    if (data.success) { location.reload(); }
+    else { alert('수정 실패: ' + (data.error ?? '알 수 없는 오류')); }
+  } catch (e) { alert('네트워크 오류: ' + e.message); }
+}
+
+function toggleDirectiveDetail(id) {
+  const el = document.getElementById('ddetail-' + id);
+  if (!el) return;
+  const isOpen = el.style.display !== 'none';
+  el.style.display = isOpen ? 'none' : 'block';
+  const btn = el.closest('.feed-container')?.querySelector('button[onclick*="toggleDirectiveDetail"]');
+  if (btn) btn.textContent = isOpen ? '상세 보기' : '닫기';
+}
 
 function toggleDirectiveForm() {
   const f = document.getElementById('directive-form');

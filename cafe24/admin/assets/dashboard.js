@@ -7,9 +7,15 @@ function updateLastUpdatedTime() {
   if (el) el.textContent = '마지막 갱신: ' + new Date().toLocaleTimeString('ko-KR');
 }
 
-// 30초마다 페이지 새로고침 (피드 업데이트)
+// 30초마다 페이지 새로고침 (피드 업데이트) — 입력 중인 폼이 있으면 연기
 function scheduleRefresh() {
   setTimeout(() => {
+    const newForm  = document.getElementById('directive-form');
+    const editOpen = document.querySelector('[id^="dedit-"][style*="block"]');
+    if ((newForm && newForm.style.display !== 'none') || editOpen) {
+      scheduleRefresh();
+      return;
+    }
     window.location.reload();
   }, REFRESH_INTERVAL);
 }
