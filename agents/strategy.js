@@ -532,15 +532,24 @@ export async function run() {
     await send({ department: DEPARTMENT, task_type: '시스템 스캔', status: 'running',
       summary: `[사이클 ${cycle + 1}] 운영 데이터 조회 중...` });
 
+    // ── CEO 지시 + 회원 현황 먼저 조회 → 즉시 처리 ─────────────────────
+    const [activeDirectives, memberStatsEarly] = await Promise.all([
+      fetchDirectivesForStrategy(),
+      fetchMemberStats(),
+    ]);
+    const members = memberStatsEarly ?? { total: '조회 실패', paid: 0, trial: 0, expired: 0 };
+
+    const directiveResult = await processCeoDirectives(activeDirectives ?? [], null, members);
+    if (directiveResult) console.log(`  → CEO 지시 처리: ${directiveResult}`);
+
+    // ── 나머지 데이터 병렬 조회 ──────────────────────────────────────────
     const results = await Promise.allSettled([
       fetchAuditData(),
-      fetchMemberStats(),
       fetchActiveGoal(),
       fetchWorkflowStats(),
       fetchRecentErrors(),
-      fetchDirectivesForStrategy(),
     ]);
-    const [auditData, memberStats, activeGoal, workflowStats, recentErrors, activeDirectives] =
+    const [auditData, activeGoal, workflowStats, recentErrors] =
       results.map(r => r.status === 'fulfilled' ? r.value : null);
 
     const auditErrMsg = results[0].status === 'rejected'
@@ -551,7 +560,6 @@ export async function run() {
       await notifyError(DEPARTMENT, '운영 데이터 조회', new Error(auditErrMsg));
     }
 
-    const members    = memberStats ?? { total: '조회 실패', paid: 0, trial: 0, expired: 0 };
     const goal       = activeGoal;
     const isFirstRun = !goal;
 
@@ -669,12 +677,6 @@ ${workflowStats ? JSON.stringify(workflowStats, null, 2) : '데이터 없음'}
           action_required: 'PR 리뷰 또는 외부 도구/API 도입 검토 필요',
         });
       }
-    }
-
-    // ── 2d. CEO 지시 처리 (계획 수립 or 진행상황 업데이트) ─────────────
-    const directiveResult = await processCeoDirectives(activeDirectives ?? [], auditData, members);
-    if (directiveResult) {
-      console.log(`  → CEO 지시 처리: ${directiveResult}`);
     }
 
     // ── 3. 월요일 첫 사이클: 전체 주간 분석 ────────────────────────────
