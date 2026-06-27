@@ -16,7 +16,7 @@ function mdToHtml(text) {
 const API_BASE = process.env.CAFE24_API_URL.replace('/report.php', '');
 const API_KEY  = process.env.CAFE24_API_KEY;
 
-const BATCH_SIZE = 42;   // 1회 최대 42건 (하루 12회 × 42 = 504건)
+const BATCH_SIZE = 41;   // 1회 최대 41건 (하루 12회 × 41 = 492건, Gmail 500건 한도 이하)
 const DELAY_MS   = 60_000; // 건당 60초 간격
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
