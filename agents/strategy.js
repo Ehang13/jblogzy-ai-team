@@ -830,13 +830,24 @@ ${workflowStats ? JSON.stringify(workflowStats, null, 2) : '데이터 없음'}
     cycle++;
     if (!IS_LONG_RUN) break;
 
-    const nextScan = 30 * 60 * 1000; // 30분 후 재스캔
-    if (Date.now() + nextScan < deadline) {
-      console.log('  → 30분 후 다음 스캔...');
-      await new Promise(r => setTimeout(r, nextScan));
-    } else {
-      break;
+    const POLL_INTERVAL = 2 * 60 * 1000; // 2분마다 신규 CEO 지시 확인
+    const nextScanAt    = Date.now() + 30 * 60 * 1000; // 30분 후 정규 스캔
+
+    if (Date.now() + POLL_INTERVAL >= deadline) break;
+
+    console.log('  → 대기 중 (새 CEO 지시 감지 시 즉시 처리)...');
+    let earlyWake = false;
+    while (Date.now() < nextScanAt && Date.now() + POLL_INTERVAL < deadline) {
+      await new Promise(r => setTimeout(r, POLL_INTERVAL));
+      const pending = await fetchDirectivesForStrategy();
+      const hasNew  = (pending ?? []).some(d => d.status === 'open' || d.status === 'planning');
+      if (hasNew) {
+        console.log('  → 새 CEO 지시 감지! 즉시 다음 사이클 시작');
+        earlyWake = true;
+        break;
+      }
     }
+    if (!earlyWake && Date.now() >= deadline) break;
   }
 
   console.log('✅ [전략기획팀] 완료\n');
