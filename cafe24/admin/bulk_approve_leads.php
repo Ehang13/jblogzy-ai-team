@@ -14,8 +14,8 @@ try {
     $body = json_decode(file_get_contents('php://input'), true) ?? [];
     $scheduledAt = $body['scheduled_send_at'] ?? null;
 
-    // 시간당 20건씩 분산 발송
-    $batchPerHour = 20;
+    // 시간당 42건씩 분산 발송 (하루 12시간 × 42 = 504건)
+    $batchPerHour = 42;
     $ids = $pdo->query("SELECT id FROM leads WHERE email_status='pending' ORDER BY id ASC")
                 ->fetchAll(PDO::FETCH_COLUMN);
 
