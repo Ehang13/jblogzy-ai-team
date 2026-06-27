@@ -332,7 +332,7 @@ ${directiveContext ? `\n[CEO 지시 사항 — 최우선 반영]\n${directiveCon
 - 전체 300자 이내
 - 형식: 제목: [제목]\n---\n[본문]`;
 
-  return ask(prompt, 1000);
+  return askFast(prompt, 400);
 }
 
 function parseEmailDraft(raw) {
