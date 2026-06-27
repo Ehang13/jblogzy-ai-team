@@ -370,6 +370,8 @@ async function crawlAndReport(browser, region, industries, autoApprove, directiv
 
         for (const [emailDomain, emailStatus] of [['naver.com', 'pending'], ['gmail.com', 'guess']]) {
           const email = `${lead.blogId}@${emailDomain}`;
+          // Gmail 추정 주소는 자동 승인 ON이어도 항상 guess 유지 (미존재 주소 발송 방지)
+          const resolvedStatus = emailStatus === 'guess' ? 'guess' : (autoApprove ? 'approved' : 'pending');
           await send({
             department:        DEPARTMENT,
             task_type:         '리드 발굴',
@@ -379,7 +381,7 @@ async function crawlAndReport(browser, region, industries, autoApprove, directiv
             lead_platform:     'naver_place',
             lead_contact:      email,
             lead_contact_type: 'email',
-            lead_email_status: autoApprove ? 'approved' : emailStatus,
+            lead_email_status: resolvedStatus,
             lead_source_url:   lead.placeUrl,
             lead_email_subject: subject,
             lead_email_body:   body,
