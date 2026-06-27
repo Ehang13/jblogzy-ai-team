@@ -138,6 +138,16 @@ export const ALL_REGIONS = [
 // ─────────────────────────────────────────────
 // 영업팀 자동 승인 설정 조회
 // ─────────────────────────────────────────────
+async function isDeptEnabled() {
+  try {
+    const res  = await fetch(`${CAFE24_API_BASE}/get_setting.php?key=dept_enabled_sales`, {
+      headers: { 'X-Api-Key': CAFE24_API_KEY },
+    });
+    const json = await res.json();
+    return json.value !== '0';
+  } catch { return true; }
+}
+
 async function isSalesAutoApproveEnabled() {
   try {
     const base = process.env.CAFE24_API_URL.replace('/report.php', '');
@@ -421,6 +431,11 @@ export async function run() {
 
   if (!process.env.NAVER_CLIENT_ID || !process.env.NAVER_CLIENT_SECRET) {
     await notifyError(DEPARTMENT, '환경변수 누락', new Error('NAVER_CLIENT_ID / NAVER_CLIENT_SECRET 가 .env에 없습니다'));
+    return;
+  }
+
+  if (!await isDeptEnabled()) {
+    console.log('[영업팀] 비활성화 상태 — 실행 건너뜀');
     return;
   }
 

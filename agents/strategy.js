@@ -503,7 +503,22 @@ if (process.argv[1].endsWith('파일명.js')) run().catch(console.error);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+async function isDeptEnabled() {
+  try {
+    const res  = await fetch(`${CAFE24_API_BASE}/get_setting.php?key=dept_enabled_strategy`, {
+      headers: { 'X-Api-Key': CAFE24_API_KEY },
+    });
+    const json = await res.json();
+    return json.value !== '0';
+  } catch { return true; }
+}
+
 export async function run() {
+  if (!await isDeptEnabled()) {
+    console.log('[전략기획팀] 비활성화 상태 — 실행 건너뜀');
+    return;
+  }
+
   const IS_LONG_RUN = !!process.env.STRATEGY_LONG_RUN;
   const deadline    = Date.now() + (IS_LONG_RUN ? 5.5 : 0.4) * 60 * 60 * 1000;
   const isMonday    = new Date().getUTCDay() === 1;

@@ -100,6 +100,17 @@ try {
         $directives = $stmtDir->fetchAll();
     } catch (PDOException $e3) { /* 테이블 없으면 빈 배열 */ }
 
+    // 부서 활성화 설정 조회
+    $deptEnabled = [];
+    foreach (['sales','marketing','chm','strategy'] as $dk) {
+        try {
+            $r = $pdo->prepare("SELECT value FROM settings WHERE key_name = ? LIMIT 1");
+            $r->execute(["dept_enabled_{$dk}"]);
+            $row = $r->fetch();
+            $deptEnabled[$dk] = ($row === false || $row['value'] !== '0'); // 미설정이면 기본 활성
+        } catch (PDOException $e2) { $deptEnabled[$dk] = true; }
+    }
+
 } catch (PDOException $e) {
     $dbError = $e->getMessage();
 }
@@ -356,18 +367,26 @@ function timeAgo(string $datetime): string {
   <!-- 부서별 상태 카드 -->
   <div class="row g-3 mb-4">
     <?php foreach ($departments as $key => $dept): ?>
-      <?php $stat = $deptStats[$key] ?? null; ?>
+      <?php $stat = $deptStats[$key] ?? null; $enabled = $deptEnabled[$key] ?? true; ?>
       <div class="col-12 col-md-4">
         <a href="department.php?dept=<?= $key ?>" class="text-decoration-none">
-        <div class="dept-card" style="cursor:pointer;transition:border-color .2s" onmouseover="this.style.borderColor='#3b82f6'" onmouseout="this.style.borderColor=''"">
+        <div class="dept-card" style="cursor:pointer;transition:border-color .2s;<?= $enabled ? '' : 'opacity:.45' ?>" onmouseover="this.style.borderColor='#3b82f6'" onmouseout="this.style.borderColor=''"">
           <div class="d-flex justify-content-between align-items-start mb-3">
             <div>
               <span class="dept-icon"><?= $dept['icon'] ?></span>
               <span class="dept-name"><?= $dept['name'] ?></span>
             </div>
-            <span class="badge bg-<?= $stat ? ($stat['errors'] > 0 ? 'danger' : 'success') : 'secondary' ?>">
-              <?= $stat ? ($stat['errors'] > 0 ? '⚠ 오류' : '● 정상') : '대기 중' ?>
-            </span>
+            <div class="d-flex align-items-center gap-2" onclick="event.preventDefault();event.stopPropagation()">
+              <div class="form-check form-switch mb-0">
+                <input class="form-check-input" type="checkbox" id="toggle-<?= $key ?>"
+                       <?= $enabled ? 'checked' : '' ?>
+                       onchange="toggleDeptEnabled('<?= $key ?>', this.checked)"
+                       style="cursor:pointer;width:2.2rem;height:1.1rem">
+              </div>
+              <span class="badge bg-<?= $enabled ? ($stat ? ($stat['errors'] > 0 ? 'danger' : 'success') : 'secondary') : 'dark' ?>">
+                <?= $enabled ? ($stat ? ($stat['errors'] > 0 ? '⚠ 오류' : '● 정상') : '대기 중') : '■ 중지' ?>
+              </span>
+            </div>
           </div>
           <div class="row text-center">
             <div class="col-4">
@@ -444,6 +463,30 @@ function timeAgo(string $datetime): string {
 <script src="assets/dashboard.js"></script>
 <script>
 const API_BASE = '<?= htmlspecialchars(rtrim(str_replace('/admin', '', (isset($_SERVER['HTTPS']) ? 'https' : 'http') . '://' . $_SERVER['HTTP_HOST'] . dirname(dirname($_SERVER['REQUEST_URI']))), '/')) ?>/api';
+
+async function toggleDeptEnabled(dept, enabled) {
+  const deptNames = { sales:'영업팀', marketing:'마케팅팀', chm:'고객관리팀', strategy:'전략기획팀' };
+  try {
+    const res  = await fetch(API_BASE + '/set_setting.php', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ key: 'dept_enabled_' + dept, value: enabled ? '1' : '0' }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      const card = document.getElementById('toggle-' + dept)?.closest('.dept-card');
+      if (card) card.style.opacity = enabled ? '1' : '0.45';
+      const badge = document.getElementById('toggle-' + dept)?.closest('[onclick]')?.querySelector('.badge');
+      if (badge) { badge.className = 'badge bg-' + (enabled ? 'secondary' : 'dark'); badge.textContent = enabled ? '대기 중' : '■ 중지'; }
+    } else {
+      alert('설정 변경 실패: ' + (data.error ?? '알 수 없는 오류'));
+      document.getElementById('toggle-' + dept).checked = !enabled;
+    }
+  } catch (e) {
+    alert('네트워크 오류');
+    document.getElementById('toggle-' + dept).checked = !enabled;
+  }
+}
 
 function toggleDirectiveEdit(id) {
   const el = document.getElementById('dedit-' + id);

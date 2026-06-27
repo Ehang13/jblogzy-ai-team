@@ -109,6 +109,21 @@ function parsePost(raw) {
 // ─────────────────────────────────────────────
 // 메인
 // ─────────────────────────────────────────────
+async function isDeptEnabled() {
+  try {
+    const res  = await fetch(`${CAFE24_BASE}/get_setting.php?key=dept_enabled_marketing`, {
+      headers: { 'X-Api-Key': CAFE24_KEY },
+    });
+    const json = await res.json();
+    return json.value !== '0';
+  } catch { return true; }
+}
+
+if (!await isDeptEnabled()) {
+  console.log('[마케팅팀] 비활성화 상태 — 실행 건너뜀');
+  process.exit(0);
+}
+
 console.log('\n📝 [네이버 마케팅] 자동 포스팅 시작');
 
 // DB 계정 조회 (없으면 env 폴백)

@@ -306,7 +306,22 @@ function isBusinessHours() {
   return day >= 1 && day <= 5 && hour >= 9 && hour < 18;
 }
 
+async function isDeptEnabled() {
+  try {
+    const res  = await fetch(`${CAFE24_API_BASE}/get_setting.php?key=dept_enabled_chm`, {
+      headers: { 'X-Api-Key': CAFE24_API_KEY },
+    });
+    const json = await res.json();
+    return json.value !== '0';
+  } catch { return true; }
+}
+
 export async function run() {
+  if (!await isDeptEnabled()) {
+    console.log('[고객관리팀] 비활성화 상태 — 실행 건너뜀');
+    return;
+  }
+
   if (!isBusinessHours()) {
     console.log('⏰ [고객관리팀] 업무시간 외 (평일 09:00~18:00만 실행) - 종료');
     return;
