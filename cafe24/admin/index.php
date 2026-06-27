@@ -376,7 +376,7 @@ function timeAgo(string $datetime): string {
               <span class="dept-icon"><?= $dept['icon'] ?></span>
               <span class="dept-name"><?= $dept['name'] ?></span>
             </div>
-            <div class="d-flex align-items-center gap-2" onclick="event.preventDefault();event.stopPropagation()">
+            <div class="d-flex align-items-center gap-2" onclick="event.stopPropagation()">
               <div class="form-check form-switch mb-0">
                 <input class="form-check-input" type="checkbox" id="toggle-<?= $key ?>"
                        <?= $enabled ? 'checked' : '' ?>
