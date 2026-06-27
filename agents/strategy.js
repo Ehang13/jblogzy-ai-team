@@ -134,7 +134,7 @@ async function setLastDevDate(dateStr) {
 
 async function submitCeoRequest({ department, priority, title, description, action_required }) {
   try {
-    await fetch(`${CAFE24_API_BASE}/api/submit_ceo_request.php`, {
+    await fetch(`${CAFE24_API_BASE}/submit_ceo_request.php`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json', 'X-Api-Key': CAFE24_API_KEY },
       body:    JSON.stringify({ department, priority, title, description, action_required }),
@@ -165,7 +165,7 @@ async function setSetting(key, value) {
 // ── CEO 지시 API 헬퍼 ─────────────────────────────────────────────────────
 async function updateDirectiveApi(id, fields) {
   try {
-    await fetch(`${CAFE24_API_BASE}/api/update_directive.php`, {
+    await fetch(`${CAFE24_API_BASE}/update_directive.php`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json', 'X-Api-Key': CAFE24_API_KEY },
       body:    JSON.stringify({ id, ...fields }),
@@ -175,7 +175,7 @@ async function updateDirectiveApi(id, fields) {
 
 async function fetchDirectivesForStrategy() {
   try {
-    const res = await fetch(`${CAFE24_API_BASE}/api/get_active_directives.php`, {
+    const res = await fetch(`${CAFE24_API_BASE}/get_active_directives.php`, {
       headers: { 'X-Api-Key': CAFE24_API_KEY },
     });
     if (!res.ok) return [];
