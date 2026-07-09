@@ -21,7 +21,21 @@ const DELAY_MS   = 60_000; // 건당 60초 간격
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+async function isDeptEnabled(dept) {
+  try {
+    const res  = await fetch(`${API_BASE}/get_setting.php?key=dept_enabled_${dept}`, {
+      headers: { 'X-Api-Key': API_KEY },
+    });
+    const json = await res.json();
+    return json.value !== '0';
+  } catch { return true; }
+}
+
 async function sendApprovedLeads() {
+  if (!await isDeptEnabled('sales')) {
+    console.log('[영업] 비활성화 상태 — 발송 건너뜀');
+    return;
+  }
   const res  = await fetch(`${API_BASE}/fetch_approved_leads.php`, { headers: { 'X-Api-Key': API_KEY } });
   const { leads } = await res.json();
   if (!leads?.length) { console.log('[영업] 발송 대기 리드 없음'); return; }
@@ -47,6 +61,10 @@ async function sendApprovedLeads() {
 }
 
 async function sendApprovedChmEmails() {
+  if (!await isDeptEnabled('chm')) {
+    console.log('[CHM] 비활성화 상태 — 발송 건너뜀');
+    return;
+  }
   const res  = await fetch(`${API_BASE}/fetch_approved_chm_emails.php`, { headers: { 'X-Api-Key': API_KEY } });
   const { emails } = await res.json();
   if (!emails?.length) { console.log('[CHM] 발송 대기 이메일 없음'); return; }

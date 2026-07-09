@@ -10,6 +10,16 @@ const DEPARTMENT = 'marketing';
 const CAFE24_API_BASE = process.env.CAFE24_API_URL.replace('/report.php', '');
 const CAFE24_API_KEY  = process.env.CAFE24_API_KEY;
 
+async function isDeptEnabled() {
+  try {
+    const res  = await fetch(`${CAFE24_API_BASE}/get_setting.php?key=dept_enabled_marketing`, {
+      headers: { 'X-Api-Key': CAFE24_API_KEY },
+    });
+    const json = await res.json();
+    return json.value !== '0';
+  } catch { return true; }
+}
+
 async function isMarketingAutoApproveEnabled() {
   try {
     const res = await fetch(
@@ -127,6 +137,11 @@ async function generateImagePrompt(sector) {
 }
 
 export async function run() {
+  if (!await isDeptEnabled()) {
+    console.log('[마케팅팀] 비활성화 상태 — 실행 건너뜀');
+    return;
+  }
+
   const todaySectors = getTodaySectors();
   console.log(`\n✍️  [마케팅팀] 오늘의 콘텐츠 생성 시작 - ${todaySectors.map(s => s.name).join(', ')}`);
 
